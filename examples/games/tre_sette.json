@@ -1,0 +1,21 @@
+{
+  "game": "tre_sette",
+  "hand": [
+    {"rank": "1", "suit": "denari"},
+    {"rank": "3", "suit": "denari"},
+    {"rank": "7", "suit": "coppe"},
+    {"rank": "Fante", "suit": "spade"}
+  ],
+  "trump_suit": "denari",
+  "lead_suit": "coppe",
+  "trick": [{"rank": "2", "suit": "coppe"}],
+  "partner_known": true,
+  "points_us": 5,
+  "points_them": 4,
+  "legal_cards": [
+    {"rank": "7", "suit": "coppe"},
+    {"rank": "1", "suit": "denari"}
+  ],
+  "bankroll": {"cash": 0, "currency": "EUR"},
+  "rules": {"target_points": 21}
+}

@@ -1,0 +1,14 @@
+{
+  "game": "blackjack",
+  "dealer_upcard": {"rank": "K", "suit": "H"},
+  "hands": [
+    {
+      "cards": [{"rank": "A", "suit": "S"}, {"rank": "7", "suit": "D"}],
+      "bet": 25,
+      "is_soft": true
+    }
+  ],
+  "legal_actions": ["hit", "stand", "double"],
+  "bankroll": {"cash": 500, "currency": "EUR", "session_profit": 40},
+  "rules": {"decks": 6, "dealer_hits_soft_17": true, "das": true}
+}

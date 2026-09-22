@@ -1,0 +1,22 @@
+{
+  "game": "italian_poker",
+  "street": "flop",
+  "hole_cards": [
+    {"rank": "1", "suit": "denari"},
+    {"rank": "7", "suit": "denari"}
+  ],
+  "community": [
+    {"rank": "3", "suit": "coppe"},
+    {"rank": "Re", "suit": "spade"},
+    {"rank": "5", "suit": "bastoni"}
+  ],
+  "pot": 30,
+  "to_call": 10,
+  "stack": 200,
+  "position": "dealer",
+  "num_players": 4,
+  "legal_actions": ["fold", "call", "raise"],
+  "min_raise": 20,
+  "bankroll": {"cash": 250, "currency": "EUR"},
+  "rules": {"deck": "italian40", "antes": true}
+}

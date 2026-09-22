@@ -1,0 +1,34 @@
+{
+  "game": "scopa",
+  "hand": [
+    {"rank": "7", "suit": "denari"},
+    {"rank": "3", "suit": "coppe"},
+    {"rank": "2", "suit": "spade"}
+  ],
+  "table": [
+    {"rank": "4", "suit": "bastoni"},
+    {"rank": "3", "suit": "denari"},
+    {"rank": "Re", "suit": "coppe"}
+  ],
+  "captured_us": 8,
+  "captured_them": 6,
+  "legal_plays": [
+    {
+      "hand_card": {"rank": "7", "suit": "denari"},
+      "table_cards": [{"rank": "4", "suit": "bastoni"}, {"rank": "3", "suit": "denari"}],
+      "is_scopa": false
+    },
+    {
+      "hand_card": {"rank": "3", "suit": "coppe"},
+      "table_cards": [{"rank": "3", "suit": "denari"}],
+      "is_scopa": false
+    },
+    {
+      "hand_card": {"rank": "2", "suit": "spade"},
+      "table_cards": [],
+      "is_scopa": false
+    }
+  ],
+  "bankroll": {"cash": 0, "currency": "EUR"},
+  "rules": {"variant": "classic"}
+}
