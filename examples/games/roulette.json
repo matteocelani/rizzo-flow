@@ -1,0 +1,16 @@
+{
+  "game": "roulette",
+  "wheel": "european",
+  "last_results": [17, 0, 32, 15, 19],
+  "legal_bet_types": ["red", "black", "dozen", "straight_up", "pass"],
+  "chip_values": [1, 5, 10, 25, 50],
+  "min_bet": 1,
+  "max_bet": 100,
+  "bankroll": {
+    "cash": 200,
+    "currency": "EUR",
+    "session_profit": -30,
+    "stop_loss": 100
+  },
+  "rules": {"en_prison": false}
+}

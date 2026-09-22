@@ -1,0 +1,20 @@
+{
+  "game": "holdem",
+  "street": "flop",
+  "hole_cards": [{"rank": "A", "suit": "H"}, {"rank": "K", "suit": "D"}],
+  "community": [
+    {"rank": "Q", "suit": "S"},
+    {"rank": "J", "suit": "H"},
+    {"rank": "2", "suit": "C"}
+  ],
+  "pot": 60,
+  "to_call": 20,
+  "stack": 940,
+  "position": "CO",
+  "num_players": 6,
+  "legal_actions": ["fold", "call", "raise"],
+  "min_raise": 20,
+  "raise_suggestions": [20, 30, 50],
+  "bankroll": {"cash": 1000, "currency": "EUR", "session_profit": -20},
+  "rules": {"small_blind": 1, "big_blind": 2, "no_limit": true}
+}

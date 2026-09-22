@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Jevbet mock blackjack table</title>
+</head>
+<body>
+  <!-- Local fixture only — no network, no real casino. -->
+  <div id="table"
+       data-game="blackjack"
+       data-bankroll="500"
+       data-bet="25"
+       data-decks="6">
+    <div data-role="dealer" data-upcard="KH"></div>
+    <div data-role="player" data-cards="AS,7D" data-soft="true"></div>
+    <button type="button" data-action="hit">Hit</button>
+    <button type="button" data-action="stand">Stand</button>
+    <button type="button" data-action="double">Double</button>
+  </div>
+</body>
+</html>

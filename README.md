@@ -21,6 +21,7 @@
 <img src="https://img.shields.io/badge/latency-~50%20ms%20%2F%20decision%20(Q8__0%2C%20RTX%205060%20Ti)-brightgreen" alt="about 50 ms per decision at Q8_0 on an RTX 5060 Ti" />
 <img src="https://img.shields.io/badge/GPU%20memory-~5.6%20GiB%20(Q8__0)-brightgreen" alt="about 5.6 GiB of GPU memory at Q8_0" />
 <img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen" alt="Apache-2.0 license" />
+<img src="https://img.shields.io/badge/layer-Jevbet%20card%2Fbetting-orange" alt="Jevbet card and betting layer" />
 </p>
 
 <sub>🌐 <a href="https://rizzo-ai-academy.github.io/rizzo-flow/"><b>Website</b></a> · A project by <a href="https://www.rizzoaiacademy.com"><b>Rizzo AI Academy</b></a> · 🇮🇹 <a href="docs/README.it.md">Documentazione dettagliata in italiano</a></sub>
@@ -512,12 +513,24 @@ evaluator reports accuracy, NLL, Brier, ECE and coverage.
 - English is strongest; an Italian boolean flipped between BF16 and 8 bit in our smoke set (MLX).
 - Localhost by default; no rate limiting; not hardened for public exposure.
 
+## Jevbet (card / betting layer)
+
+This fork adds **[Jevbet](docs/jevbet.md)** — a sibling package (`src/jevbet/`) that maps card and
+betting table state to Rizzo `/v1/decisions` requests (blackjack, Texas Hold'em, poker italiano,
+tre sette, scopa, roulette), with bankroll policy helpers and a Playwright/mock browser scaffold.
+It does not fine-tune Spark weights and does not fork the inference path.
+
+```bash
+uv run jevbet decide examples/games/blackjack.json --schema-only
+uv run jevbet demo --game blackjack
+```
+
 ## Development
 
 ```bash
 uv sync --locked --extra test
-uv run pytest -q                        # 65 tests, no weights needed
-RIZZO_REAL=1 uv run pytest -q -m integration   # 4 more, on the real runtime and GGUF weights
+uv run pytest -q                        # unit tests, no weights needed
+RIZZO_REAL=1 uv run pytest -q -m integration   # more, on the real runtime and GGUF weights
 uv run ruff check src tests scripts
 uv run rizzo evaluate benchmarks/smoke.jsonl --compare-modes --output results/local-smoke.json
 uv run python scripts/semif_compare.py --system rizzo --semif ../SemIf --output results/local-semif
@@ -525,6 +538,7 @@ uv run python scripts/semif_report.py results/local-semif --semif ../SemIf   # h
 ```
 
 Architecture notes and the current state of the work: [CLAUDE.md](CLAUDE.md) (Italian).
+Jevbet notes: [docs/jevbet.md](docs/jevbet.md).
 
 ## Credits
 
