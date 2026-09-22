@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 TreSetteAction = Literal["play_card", "pass"]
@@ -60,12 +61,7 @@ def build_tre_sette_request(state: TreSetteState, policy: RiskPolicy | None = No
                 description=f"Play {card.label()} from hand.",
             )
         )
-    if len(options) < 2:
-        options.append(
-            Option(
-                id="hold_tempo", description="No alternate legal card; keep tempo (forced play)."
-            )
-        )
+    options = pad_singleton(options)
     return Request(
         state=evidence,
         questions={

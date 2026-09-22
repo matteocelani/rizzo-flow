@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rizzo_flow.schema import Request
 
+from .choices import HOLD_POLICY, fail_close_answers, legal_ids
 from .games.registry import build_request, list_games
 from .policy import RiskPolicy
 
@@ -34,11 +35,20 @@ def _policy_from_args(args) -> RiskPolicy:
 
 
 def _stub_response(request: Request) -> dict:
-    """Deterministic no-weight response for demos and --fake (favors the second option)."""
+    """Deterministic no-weight response for demos and --fake.
+
+    Among real (post-policy) options, prefers the second when several exist.
+    Never selects the ``hold_policy`` sentinel or any id outside that set.
+    """
     answers = {}
     for qid, question in request.questions.items():
         if question.type == "choice":
-            choice = question.options[min(1, len(question.options) - 1)].id
+            real = legal_ids(list(question.options))
+            if not real:
+                raise ValueError(f"Question {qid!r} has no post-policy legal option")
+            choice = real[1] if len(real) > 1 else real[0]
+            if choice == HOLD_POLICY:
+                raise ValueError("stub selected the fail-closed sentinel")
             probs = {o.id: (1.0 if o.id == choice else 0.0) for o in question.options}
             answers[qid] = {
                 "type": "choice",
@@ -118,13 +128,13 @@ def cmd_decide(args) -> int:
         )
         try:
             with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-                write_json(json.loads(resp.read().decode("utf-8")), args.output)
+                _publish(request, json.loads(resp.read().decode("utf-8")), args.output)
         except urllib.error.URLError as exc:
             print(f"Failed to reach Rizzo at {args.url}: {exc}", file=sys.stderr)
             return 1
         return 0
     if args.fake:
-        write_json(_stub_response(request), args.output)
+        _publish(request, _stub_response(request), args.output)
         return 0
 
     from rizzo_flow.engine import Engine
@@ -141,8 +151,16 @@ def cmd_decide(args) -> int:
         batch_size=args.batch_size,
         threads=args.threads,
     )
-    write_json(Engine(backend, ctx=args.ctx).decide(request), args.output)
+    _publish(request, Engine(backend, ctx=args.ctx).decide(request), args.output)
     return 0
+
+
+def _publish(request: Request, response: dict, destination: str | None) -> None:
+    """Map a sentinel (or abstention on a forced action) back to the legal id."""
+    answers = response.get("answers")
+    if isinstance(answers, dict):
+        fail_close_answers(request.questions, answers)
+    write_json(response, destination)
 
 
 def cmd_demo(args) -> int:
@@ -160,6 +178,7 @@ def cmd_demo(args) -> int:
     if args.schema_only:
         return 0
     response = _stub_response(request)
+    fail_close_answers(request.questions, response["answers"])
     print("=== decision (stub) ===")
     write_json(response, None)
     action_answer = (

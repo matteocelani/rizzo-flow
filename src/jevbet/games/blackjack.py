@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, Card, Money
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 BlackjackAction = Literal["hit", "stand", "double", "split", "surrender", "insurance"]
@@ -81,12 +82,9 @@ def build_blackjack_request(state: BlackjackState, policy: RiskPolicy | None = N
         "shoe_penetration": state.shoe_penetration,
         "legal_actions_after_policy": actions,
     }
-    options = [
-        Option(id=a, description=_ACTION_TEXT.get(a, f"Perform action {a}.")) for a in actions
-    ]
-    if len(options) < 2:
-        peer = "stand" if options[0].id != "stand" else "hit"
-        options.append(Option(id=peer, description=_ACTION_TEXT.get(peer, peer)))
+    options = pad_singleton(
+        [Option(id=a, description=_ACTION_TEXT.get(a, f"Perform action {a}.")) for a in actions]
+    )
     return Request(
         state=evidence,
         questions={

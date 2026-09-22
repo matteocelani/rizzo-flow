@@ -98,6 +98,52 @@ def test_load_game_state_requires_game_id():
         load_game_state({"legal_actions": ["hit", "stand"]})
 
 
+def test_stop_loss_never_reintroduces_filtered_actions():
+    """A single remaining action is paired with a sentinel, never a dropped move."""
+    from jevbet.choices import HOLD_POLICY, fail_close_answers, resolve_choice
+    from jevbet.cli import _stub_response
+
+    blackjack = json.loads((EXAMPLES / "blackjack.json").read_text(encoding="utf-8"))
+    blackjack["bankroll"]["session_profit"] = -80
+    blackjack["bankroll"]["stop_loss"] = 50
+    request = build_request(blackjack, policy=RiskPolicy())
+    ids = [option.id for option in request.questions["action"].options]
+    assert ids == ["stand", HOLD_POLICY]
+    assert "hit" not in ids and "double" not in ids
+    stub = _stub_response(request)
+    assert stub["answers"]["action"]["choice"] == "stand"
+    # Model (or a bad stub) picking the sentinel still publishes the legal action.
+    stub["answers"]["action"]["choice"] = HOLD_POLICY
+    fail_close_answers(request.questions, stub["answers"])
+    assert stub["answers"]["action"]["choice"] == "stand"
+    assert resolve_choice("hit", ["stand"]) == "stand"
+
+    holdem = json.loads((EXAMPLES / "holdem.json").read_text(encoding="utf-8"))
+    holdem["bankroll"]["session_profit"] = -80
+    holdem["bankroll"]["stop_loss"] = 50
+    request = build_request(holdem, policy=RiskPolicy())
+    ids = [option.id for option in request.questions["action"].options]
+    assert ids[0] == "fold"
+    assert HOLD_POLICY in ids
+    assert "call" not in ids and "raise" not in ids
+    assert _stub_response(request)["answers"]["action"]["choice"] == "fold"
+
+
+def test_singleton_games_use_sentinel_not_a_fake_move():
+    from jevbet.choices import HOLD_POLICY
+
+    roulette = json.loads((EXAMPLES / "roulette.json").read_text(encoding="utf-8"))
+    roulette["legal_bet_types"] = ["red"]
+    ids = [o.id for o in build_request(roulette).questions["bet_type"].options]
+    assert ids == ["red", HOLD_POLICY]
+
+    scopa = json.loads((EXAMPLES / "scopa.json").read_text(encoding="utf-8"))
+    scopa["legal_plays"] = [scopa["legal_plays"][0]]
+    ids = [o.id for o in build_request(scopa).questions["play"].options]
+    assert ids == ["p0", HOLD_POLICY]
+    assert "p_alt" not in ids
+
+
 def test_cli_schema_only(tmp_path):
     from jevbet.cli import main
 

@@ -31,12 +31,26 @@ game state JSON  ──►  jevbet builders (+ RiskPolicy)
 | --- | --- |
 | `jevbet.games.*` | Pydantic states + builders per game |
 | `jevbet.policy.RiskPolicy` | Max bet fraction, stop-loss; filters options **before** the model |
+| `jevbet.choices` | Fail-closed padding when only one legal action remains |
 | `jevbet.browser.TableDriver` | `read_state` / `legal_actions` / `act` |
 | `MockTableDriver` | Local HTML fixtures (CI-safe) |
 | `ChromeTableDriver` | Playwright Chromium skeleton + selector map (site adapters plug in here) |
 
 Built-in games: `blackjack`, `holdem`, `italian_poker`, `tre_sette`, `scopa`, `roulette`.
 Register more with `jevbet.register_game(name, StateCls, builder)`.
+
+## Fail-closed choices
+
+Rizzo `choice` questions need at least two options. `RiskPolicy` can leave a single
+legal action (stop-loss drops hit/double/call/raise). Builders **do not** pad a second
+real move — that would put a filtered action back in front of the model.
+
+They append the sentinel option id `hold_policy` (not a table action; Rizzo option ids
+must start with a letter or digit, so it is not `__hold_policy__`). `jevbet.choices.resolve_choice`
+maps that sentinel, an unknown id, or abstention back to the sole legal action.
+`_stub_response` only ever picks ids in the post-policy set, never the sentinel and never
+a filtered action. `ChromeTableDriver.read_state` stays unimplemented on purpose: site
+adapters subclass it. Navigation uses a 30s timeout.
 
 ## Quickstart (Mac / Metal)
 

@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, NumericQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, Card, Money
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 Street = Literal["preflop", "flop", "turn", "river"]
@@ -81,8 +82,7 @@ def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -
         else:
             desc = "Move all-in with the remaining stack."
         options.append(Option(id=action, description=desc))
-    if len(options) < 2:
-        options.append(Option(id="fold", description="Fold and surrender the pot."))
+    options = pad_singleton(options)
 
     questions = {
         "action": ChoiceQuestion(

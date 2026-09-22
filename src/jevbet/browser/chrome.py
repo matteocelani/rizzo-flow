@@ -6,10 +6,15 @@ hard-coded; pass ``base_url`` yourself. Do not store credentials in this module.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from .driver import TableDriver
+
+# Same shape as a Rizzo option id. Rejects quotes, brackets, and selector metacharacters.
+_ACTION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+NAVIGATION_TIMEOUT_MS = 30_000
 
 
 @dataclass
@@ -74,18 +79,23 @@ class ChromeTableDriver(TableDriver):
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self.headless)
         self._page = self._browser.new_page()
-        self._page.goto(self.base_url)
+        self._page.set_default_timeout(NAVIGATION_TIMEOUT_MS)
+        self._page.goto(self.base_url, timeout=NAVIGATION_TIMEOUT_MS, wait_until="domcontentloaded")
         self._owned = True
         return self
 
     def read_state(self) -> dict[str, Any]:
+        """Intentionally unimplemented.
+
+        Site adapters must subclass this driver and parse the DOM with
+        ``self.selectors``. The base class does not guess casino markup.
+        ``legal_actions`` and ``act`` work against ``data-action`` buttons once
+        a page is open; tests should use ``MockTableDriver``.
+        """
         self._ensure_page()
-        # TODO: site-specific parsing using self.selectors.
-        # Prefer reading structured data-* attributes when the page exposes them;
-        # otherwise map visible text → Card.parse / ItalianCard.parse.
         raise NotImplementedError(
-            "ChromeTableDriver.read_state needs a site-specific selector map. "
-            "Use MockTableDriver for local tests, or subclass and implement DOM reads."
+            "ChromeTableDriver.read_state is a site-adapter hook. "
+            "Subclass it, or use MockTableDriver for local fixtures."
         )
 
     def legal_actions(self) -> list[str]:
@@ -100,12 +110,16 @@ class ChromeTableDriver(TableDriver):
 
     def act(self, action: str, *, amount: float | None = None) -> None:
         self._ensure_page()
-        locator = self._page.locator(f"{self.selectors.action_buttons}[data-action='{action}']")
-        if locator.count() == 0:
-            raise ValueError(f"No clickable control for action {action!r}")
-        # TODO: if amount is set, fill the stake/raise input before clicking.
-        del amount
-        locator.first.click()
+        if not _ACTION_ID.fullmatch(action):
+            raise ValueError(f"Refusing action id that is not a safe token: {action!r}")
+        # Match data-action by equality. Do not interpolate ``action`` into a selector.
+        for button in self._page.query_selector_all(self.selectors.action_buttons):
+            if button.get_attribute("data-action") == action:
+                # TODO: if amount is set, fill the stake/raise input before clicking.
+                del amount
+                button.click()
+                return
+        raise ValueError(f"No clickable control for action {action!r}")
 
     def close(self) -> None:
         if not self._owned:

@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 
@@ -66,8 +67,7 @@ def build_scopa_request(state: ScopaState, policy: RiskPolicy | None = None) -> 
                 description=f"Play {play.hand_card.label()} capturing {captured}{scopa}.",
             )
         )
-    if len(options) < 2:
-        options.append(Option(id="p_alt", description="Alternate forced play (only one legal)."))
+    options = pad_singleton(options)
     return Request(
         state=evidence,
         questions={

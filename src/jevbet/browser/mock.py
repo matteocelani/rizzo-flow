@@ -71,8 +71,11 @@ class MockTableDriver(TableDriver):
 
     @classmethod
     def from_fixture(cls, name: str) -> MockTableDriver:
-        path = FIXTURES_DIR / name
-        if not path.exists():
+        root = FIXTURES_DIR.resolve()
+        path = (root / name).resolve()
+        if path != root and root not in path.parents:
+            raise ValueError(f"Fixture path escapes the fixtures directory: {name!r}")
+        if not path.is_file():
             raise FileNotFoundError(path)
         return cls(path)
 

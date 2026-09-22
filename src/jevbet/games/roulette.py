@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, NumericQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, Money
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 RouletteBetType = Literal[
@@ -87,9 +88,9 @@ def build_roulette_request(state: RouletteState, policy: RiskPolicy | None = Non
         "legal_bet_types_after_policy": types,
         "chip_values_after_policy": chips,
     }
-    options = [Option(id=t.replace("-", "_"), description=_BET_TEXT.get(t, t)) for t in types]
-    if len(options) < 2:
-        options.append(Option(id="pass", description=_BET_TEXT["pass"]))
+    options = pad_singleton(
+        [Option(id=t.replace("-", "_"), description=_BET_TEXT.get(t, t)) for t in types]
+    )
     questions: dict = {
         "bet_type": ChoiceQuestion(
             type="choice",

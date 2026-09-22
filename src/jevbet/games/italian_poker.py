@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard, Money
+from ..choices import pad_singleton
 from ..policy import RiskPolicy
 
 ItalianStreet = Literal["preflop", "flop", "turn", "river", "showdown"]
@@ -72,9 +73,7 @@ def build_italian_poker_request(
         "raise": f"Raise; minimum {state.min_raise}.",
         "pass": "Pass according to house rules (no bet).",
     }
-    options = [Option(id=a, description=text.get(a, a)) for a in actions]
-    if len(options) < 2:
-        options.append(Option(id="fold", description=text["fold"]))
+    options = pad_singleton([Option(id=a, description=text.get(a, a)) for a in actions])
     return Request(
         state=evidence,
         questions={
