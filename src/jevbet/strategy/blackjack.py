@@ -1,44 +1,14 @@
-"""Multi-deck blackjack basic strategy.
+"""Blackjack strategy: basic charts + optional Hi-Lo Illustrious 18.
 
-Default chart: 4–8 decks, dealer hits soft 17 (H17), double after split (DAS),
-late surrender when that action is legal. Source: Blackjack Apprenticeship H17
-basic-strategy chart (2024 PDF) plus their published hard-total phrases
-("11 always doubles" on H17). Cells are **total-dependent multi-deck** plays,
-not composition-dependent indices and not a card-counting chart.
+Default path is total-dependent basic strategy. Chart selection:
 
-``HARD_H17`` / ``SOFT_H17`` / ``PAIRS_H17_DAS`` are that chart in full, including
-the hard totals that are always hit (5–8) or always stand (18–21) and soft 21.
-S17 and no-DAS are complete strings too (``HARD_S17``, ``SOFT_S17``,
-``PAIRS_S17_DAS``, ``PAIRS_H17_NDAS``, ``PAIRS_S17_NDAS``), not a patch applied
-at lookup time. The only cells that differ from H17+DAS are the published ones:
+* H17 → Blackjack Apprenticeship multi-deck tables
+* S17 + ``decks == 1`` → blackjacksimulator.net single-deck table
+* S17 + ``decks >= 2`` → blackjacksimulator.net multi-deck table
 
-S17 (``dealer_hits_soft_17`` false, or ``dealer_stands_soft_17`` true):
-
-- hard 11 vs A → hit, not double
-- soft 18 (A,7) vs 2 → stand, not double
-- soft 19 (A,8) vs 6 → stand, not double
-- hard 15 vs A → hit, not surrender
-- hard 17 vs A → stand, not surrender
-- pair of 8s vs A → split, not surrender
-
-No DAS (``das`` false): 2,2 and 3,3 vs 2–3 hit; 4,4 vs 5–6 hit; 6,6 vs 2 hit.
-Hard and soft totals do not change with DAS; only the pair tables do.
-
-``surrender`` false skips surrender cells even if the table listed the action.
-Missing ``surrender`` means "use it when it is legal".
-
-Shape gate: ``double``, ``split``, ``surrender``, and ``insurance`` are offered
-only from a two-card hand. ``split`` is offered only when ``facts.pair`` is set
-and the pair chart's cell is split or surrender-else-split. A 3-card soft 18
-vs 6 is ``U`` (double else stand) with double removed, so the action is stand
-even if the caller still lists ``double``.
-
-Not applied (documented, still the multi-deck chart): 1- and 2-deck cell
-changes, European no-hole-card, early surrender, 6:5 payout (the chart does
-not get the edge back). Insurance is never taken.
-
-Soft 18 vs 9 is a hit on this H17 chart (and on the S17 chart too). Soft 19
-vs 6 is double-else-stand (``U`` on the dealer-6 column: ``SSSSUSSSSS``).
+When ``rules.counting`` is ``hi-lo``, Illustrious 18 / Fab 4 deviations override
+the chart at their true-count thresholds (action must still be legal). Insurance
+is taken only with counting on and TC ≥ +3 (otherwise declined; EV ≈ −7%).
 """
 
 from __future__ import annotations
@@ -46,125 +16,63 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..cards import Card
-from ..games.blackjack import BlackjackState, actions_after_policy
+from ..games.blackjack import BlackjackState, actions_after_policy, derive_capabilities
 from ..policy import RiskPolicy
 from .advice import StrategyAdvice
+from .charts import (
+    DEALER_UPCARDS,
+    HARD_H17,
+    HARD_S17,
+    HARD_S17_1D,
+    HARD_S17_MULTI,
+    PAIRS_H17_DAS,
+    PAIRS_H17_NDAS,
+    PAIRS_S17_1D_DAS,
+    PAIRS_S17_1D_NDAS,
+    PAIRS_S17_DAS,
+    PAIRS_S17_MULTI_DAS,
+    PAIRS_S17_MULTI_NDAS,
+    PAIRS_S17_NDAS,
+    SOFT_H17,
+    SOFT_S17,
+    SOFT_S17_1D,
+    SOFT_S17_MULTI,
+    das_enabled,
+    hits_soft_17,
+    select_tables,
+    surrender_enabled,
+    validate_charts,
+)
+from .count import count_from_state, counting_enabled
+from .illustrious import deviation_for, should_take_insurance
 
-# Column order of every chart string. Length is always 10.
-DEALER_UPCARDS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "A")
-
-# One character per dealer upcard, left to right 2…A.
-# H hit, S stand, D double else hit, U double else stand,
-# R surrender else hit, W surrender else stand,
-# Y split, Z surrender else split, "." play the total instead of splitting.
-HARD_H17 = {
-    5: "HHHHHHHHHH",
-    6: "HHHHHHHHHH",
-    7: "HHHHHHHHHH",
-    8: "HHHHHHHHHH",
-    9: "HDDDDHHHHH",
-    10: "DDDDDDDDHH",
-    11: "DDDDDDDDDD",
-    12: "HHSSSHHHHH",
-    13: "SSSSSHHHHH",
-    14: "SSSSSHHHHH",
-    15: "SSSSSHHHRR",
-    16: "SSSSSHHRRR",
-    17: "SSSSSSSSSW",
-    18: "SSSSSSSSSS",
-    19: "SSSSSSSSSS",
-    20: "SSSSSSSSSS",
-    21: "SSSSSSSSSS",
-}
-HARD_S17 = {
-    5: "HHHHHHHHHH",
-    6: "HHHHHHHHHH",
-    7: "HHHHHHHHHH",
-    8: "HHHHHHHHHH",
-    9: "HDDDDHHHHH",
-    10: "DDDDDDDDHH",
-    11: "DDDDDDDDDH",
-    12: "HHSSSHHHHH",
-    13: "SSSSSHHHHH",
-    14: "SSSSSHHHHH",
-    15: "SSSSSHHHHH",
-    16: "SSSSSHHRRR",
-    17: "SSSSSSSSSS",
-    18: "SSSSSSSSSS",
-    19: "SSSSSSSSSS",
-    20: "SSSSSSSSSS",
-    21: "SSSSSSSSSS",
-}
-SOFT_H17 = {
-    13: "HHHDDHHHHH",
-    14: "HHHDDHHHHH",
-    15: "HHDDDHHHHH",
-    16: "HHDDDHHHHH",
-    17: "HDDDDHHHHH",
-    18: "UUUUUSSHHH",
-    19: "SSSSUSSSSS",
-    20: "SSSSSSSSSS",
-    21: "SSSSSSSSSS",
-}
-SOFT_S17 = {
-    13: "HHHDDHHHHH",
-    14: "HHHDDHHHHH",
-    15: "HHDDDHHHHH",
-    16: "HHDDDHHHHH",
-    17: "HDDDDHHHHH",
-    18: "SUUUUSSHHH",
-    19: "SSSSSSSSSS",
-    20: "SSSSSSSSSS",
-    21: "SSSSSSSSSS",
-}
-PAIRS_H17_DAS = {
-    "A": "YYYYYYYYYY",
-    "10": "SSSSSSSSSS",
-    "9": "YYYYYSYYSS",
-    "8": "YYYYYYYYYZ",
-    "7": "YYYYYY....",
-    "6": "YYYYY.....",
-    "5": "..........",
-    "4": "...YY.....",
-    "3": "YYYYYY....",
-    "2": "YYYYYY....",
-}
-PAIRS_S17_DAS = {
-    "A": "YYYYYYYYYY",
-    "10": "SSSSSSSSSS",
-    "9": "YYYYYSYYSS",
-    "8": "YYYYYYYYYY",
-    "7": "YYYYYY....",
-    "6": "YYYYY.....",
-    "5": "..........",
-    "4": "...YY.....",
-    "3": "YYYYYY....",
-    "2": "YYYYYY....",
-}
-PAIRS_H17_NDAS = {
-    "A": "YYYYYYYYYY",
-    "10": "SSSSSSSSSS",
-    "9": "YYYYYSYYSS",
-    "8": "YYYYYYYYYZ",
-    "7": "YYYYYY....",
-    "6": ".YYYY.....",
-    "5": "..........",
-    "4": "..........",
-    "3": "..YYYY....",
-    "2": "..YYYY....",
-}
-PAIRS_S17_NDAS = {
-    "A": "YYYYYYYYYY",
-    "10": "SSSSSSSSSS",
-    "9": "YYYYYSYYSS",
-    "8": "YYYYYYYYYY",
-    "7": "YYYYYY....",
-    "6": ".YYYY.....",
-    "5": "..........",
-    "4": "..........",
-    "3": "..YYYY....",
-    "2": "..YYYY....",
-}
+# Re-export chart tables for tests and docs.
+__all__ = [
+    "DEALER_UPCARDS",
+    "HARD_H17",
+    "HARD_S17",
+    "HARD_S17_1D",
+    "HARD_S17_MULTI",
+    "PAIRS_H17_DAS",
+    "PAIRS_H17_NDAS",
+    "PAIRS_S17_1D_DAS",
+    "PAIRS_S17_1D_NDAS",
+    "PAIRS_S17_DAS",
+    "PAIRS_S17_MULTI_DAS",
+    "PAIRS_S17_MULTI_NDAS",
+    "PAIRS_S17_NDAS",
+    "SOFT_H17",
+    "SOFT_S17",
+    "SOFT_S17_1D",
+    "SOFT_S17_MULTI",
+    "HandFacts",
+    "chart_preferences",
+    "hand_facts",
+    "lookup",
+    "recommend_bet_for_state",
+    "recommend_blackjack",
+    "validate_charts",
+]
 
 _CODE = {
     "H": ("hit",),
@@ -176,49 +84,10 @@ _CODE = {
     "Y": ("split",),
     "Z": ("surrender", "split"),
 }
-_HARD_CODES = frozenset("HSDRW")
-_SOFT_CODES = frozenset("HSDU")
-_PAIR_CODES = frozenset("YSZ.")
 _TWO_CARD_ONLY = frozenset({"double", "split", "surrender", "insurance"})
 _TENS = frozenset({"10", "J", "Q", "K"})
 _HARD_KEYS = tuple(range(5, 22))
 _SOFT_KEYS = tuple(range(13, 22))
-_PAIR_KEYS = ("A", "10", "9", "8", "7", "6", "5", "4", "3", "2")
-
-
-def validate_charts() -> None:
-    """Every published string is 10 characters and the key sets are complete.
-
-    Called at import. A drifted cell length or a missing total fails before
-    any hand is scored.
-    """
-    hard = {"HARD_H17": HARD_H17, "HARD_S17": HARD_S17}
-    soft = {"SOFT_H17": SOFT_H17, "SOFT_S17": SOFT_S17}
-    pairs = {
-        "PAIRS_H17_DAS": PAIRS_H17_DAS,
-        "PAIRS_S17_DAS": PAIRS_S17_DAS,
-        "PAIRS_H17_NDAS": PAIRS_H17_NDAS,
-        "PAIRS_S17_NDAS": PAIRS_S17_NDAS,
-    }
-    for name, table in hard.items():
-        _check_table(name, table, _HARD_KEYS, _HARD_CODES)
-    for name, table in soft.items():
-        _check_table(name, table, _SOFT_KEYS, _SOFT_CODES)
-    for name, table in pairs.items():
-        _check_table(name, table, _PAIR_KEYS, _PAIR_CODES)
-
-
-def _check_table(name: str, table: dict, keys: tuple, alphabet: frozenset[str]) -> None:
-    found = tuple(table)
-    if found != keys:
-        raise RuntimeError(f"{name} keys {found} != {keys}")
-    for key in keys:
-        row = table[key]
-        if len(row) != len(DEALER_UPCARDS):
-            raise RuntimeError(f"{name}[{key!r}] length {len(row)} != 10")
-        bad = set(row) - alphabet
-        if bad:
-            raise RuntimeError(f"{name}[{key!r}] has codes {sorted(bad)}")
 
 
 @dataclass(frozen=True)
@@ -234,11 +103,7 @@ class HandFacts:
 
 
 def hand_facts(cards: list[Card], *, caller_soft: bool | None = None) -> HandFacts:
-    """Hard/soft total from the cards. Aces start at 1; one ace is 11 if it fits.
-
-    A pair is two cards of the same rank, or any two 10-value cards (10/J/Q/K),
-    which the chart plays as a pair of tens (never split).
-    """
+    """Hard/soft total from the cards. Aces start at 1; one ace is 11 if it fits."""
     total = 0
     aces = 0
     for card in cards:
@@ -268,29 +133,6 @@ def hand_facts(cards: list[Card], *, caller_soft: bool | None = None) -> HandFac
     )
 
 
-def _hits_soft_17(rules: dict) -> bool:
-    if "dealer_hits_soft_17" in rules:
-        return bool(rules["dealer_hits_soft_17"])
-    if "dealer_stands_soft_17" in rules:
-        return not bool(rules["dealer_stands_soft_17"])
-    return True
-
-
-def _das(rules: dict) -> bool:
-    if "das" not in rules:
-        return True
-    return bool(rules["das"])
-
-
-def _surrender_enabled(rules: dict) -> bool:
-    if "surrender" not in rules:
-        return True
-    raw = rules["surrender"]
-    if isinstance(raw, str):
-        return raw.strip().lower() in {"late", "ls", "true", "yes", "1"}
-    return bool(raw)
-
-
 def _upcard(card: Card) -> str:
     if card.rank in _TENS:
         return "10"
@@ -301,24 +143,6 @@ def _column(up: str) -> int:
     return DEALER_UPCARDS.index(up)
 
 
-def _hard_table(*, h17: bool) -> dict[int, str]:
-    return HARD_H17 if h17 else HARD_S17
-
-
-def _soft_table(*, h17: bool) -> dict[int, str]:
-    return SOFT_H17 if h17 else SOFT_S17
-
-
-def _pair_table(*, h17: bool, das: bool) -> dict[str, str]:
-    if h17 and das:
-        return PAIRS_H17_DAS
-    if h17:
-        return PAIRS_H17_NDAS
-    if das:
-        return PAIRS_S17_DAS
-    return PAIRS_S17_NDAS
-
-
 def _expand(code: str, *, surrender: bool) -> tuple[str, ...]:
     actions = _CODE[code]
     if surrender:
@@ -326,29 +150,27 @@ def _expand(code: str, *, surrender: bool) -> tuple[str, ...]:
     return tuple(action for action in actions if action != "surrender")
 
 
-def _total_code(facts: HandFacts, up: str, *, h17: bool) -> str:
+def _total_code(facts: HandFacts, up: str, hard: dict[int, str], soft: dict[int, str]) -> str:
     if facts.total > 21:
         return "S"
     if facts.soft:
         if facts.total not in _SOFT_KEYS:
             return "H" if facts.total < 13 else "S"
-        return _soft_table(h17=h17)[facts.total][_column(up)]
+        return soft[facts.total][_column(up)]
     if facts.total not in _HARD_KEYS:
         return "H" if facts.total < 5 else "S"
-    return _hard_table(h17=h17)[facts.total][_column(up)]
+    return hard[facts.total][_column(up)]
 
 
 def _unfiltered_prefs(facts: HandFacts, up: str, rules: dict) -> tuple[str, ...]:
-    """Chart order before the two-card shape gate. Insurance is never listed."""
-    h17 = _hits_soft_17(rules)
-    das = _das(rules)
-    surrender = _surrender_enabled(rules)
+    hard, soft, pairs, _label = select_tables(rules)
+    surrender = surrender_enabled(rules)
     prefs: list[str] = []
     if facts.pair and facts.n_cards == 2:
-        code = _pair_table(h17=h17, das=das)[facts.pair][_column(up)]
+        code = pairs[facts.pair][_column(up)]
         if code != ".":
             prefs.extend(_expand(code, surrender=surrender))
-    for action in _expand(_total_code(facts, up, h17=h17), surrender=surrender):
+    for action in _expand(_total_code(facts, up, hard, soft), surrender=surrender):
         if action not in prefs:
             prefs.append(action)
     return tuple(prefs)
@@ -361,24 +183,23 @@ def _apply_shape(prefs: tuple[str, ...], facts: HandFacts) -> tuple[str, ...]:
 
 
 def lookup(facts: HandFacts, up: str, rules: dict) -> tuple[str, ...]:
-    """Ordered chart actions for this hand, upcard, and rule dict.
-
-    Earlier entries win when they are still legal *and* legal for the shape
-    of the hand. ``double`` / ``split`` / ``surrender`` / ``insurance`` are
-    removed unless the hand has exactly two cards. ``split`` is present only
-    when the pair table says so.
-    """
+    """Ordered chart actions for this hand, upcard, and rule dict."""
     return _apply_shape(_unfiltered_prefs(facts, up, rules), facts)
 
 
 def chart_preferences(
-    facts: HandFacts, up: str, *, h17: bool, das: bool, surrender: bool
+    facts: HandFacts, up: str, *, h17: bool, das: bool, surrender: bool, decks: int = 6
 ) -> tuple[str, ...]:
-    """Ordered chart actions. Same result as :func:`lookup` for these three rules."""
+    """Ordered chart actions. Same result as :func:`lookup` for these rules."""
     return lookup(
         facts,
         up,
-        {"dealer_hits_soft_17": h17, "das": das, "surrender": surrender},
+        {
+            "dealer_hits_soft_17": h17,
+            "das": das,
+            "surrender": surrender,
+            "decks": decks,
+        },
     )
 
 
@@ -391,35 +212,79 @@ def _bad_payout(rules: dict) -> bool:
     return float(payout) < 1.4
 
 
-def _shape_ok(action: str, facts: HandFacts, prefs: tuple[str, ...]) -> bool:
-    """Chart action that this hand is allowed to take.
-
-    Insurance is never taken. Split requires a two-card pair whose chart cell
-    actually lists split (it is then already in ``prefs``).
-    """
+def _shape_ok(action: str, facts: HandFacts, prefs: tuple[str, ...], caps: dict[str, bool]) -> bool:
     if action == "insurance":
+        return bool(caps.get("can_insurance"))
+    if action == "double" and not caps.get("can_double", True):
         return False
-    if action in _TWO_CARD_ONLY and facts.n_cards != 2:
+    if action == "split":
+        if facts.pair is None or facts.n_cards != 2:
+            return False
+        return bool(caps.get("can_split") or caps.get("can_resplit"))
+    if action == "surrender" and not caps.get("can_surrender", True):
         return False
-    return not (action == "split" and (facts.pair is None or "split" not in prefs))
+    if action == "hit" and not caps.get("can_hit", True):
+        return False
+    return not (action in _TWO_CARD_ONLY and facts.n_cards != 2)
+
+
+def _resolve_count(state: BlackjackState) -> tuple[bool, int, float]:
+    rules = dict(state.rules)
+    enabled = counting_enabled(rules)
+    if not enabled:
+        return False, 0, 0.0
+    observed: list[Card] = []
+    for hand in state.hands:
+        observed.extend(hand.cards)
+    observed.append(state.dealer_upcard)
+    if state.dealer_hole is not None:
+        observed.append(state.dealer_hole)
+    observed.extend(state.discarded)
+    if state.running_count is not None and state.true_count is not None:
+        return True, int(state.running_count), float(state.true_count)
+    rc, tc, _left = count_from_state(
+        rules=rules,
+        cards_seen=state.cards_seen,
+        shoe_penetration=state.shoe_penetration,
+        running=state.running_count,
+        observed=None if state.running_count is not None else observed,
+        decks_remaining_hint=state.decks_remaining,
+    )
+    if state.true_count is not None:
+        tc = float(state.true_count)
+    return True, rc, tc
+
+
+def recommend_bet_for_state(state: BlackjackState, policy: RiskPolicy | None = None):
+    """Bet advice before a round. Thin wrapper used by the CLI/play loop."""
+    from .betting import recommend_bet
+
+    policy = policy or RiskPolicy()
+    _enabled, _rc, tc = _resolve_count(state)
+    return recommend_bet(
+        state.bankroll,
+        true_count=tc if counting_enabled(dict(state.rules)) else None,
+        rules=dict(state.rules),
+        policy=policy,
+        last_result=state.last_round_result,
+        step=state.martingale_step,
+    )
 
 
 def recommend_blackjack(state: BlackjackState, policy: RiskPolicy | None = None) -> StrategyAdvice:
-    """Basic-strategy action that is still legal after ``policy``.
-
-    ``state.hands[i].is_soft`` is not trusted: the total is recomputed from the
-    cards and a disagreement is written into ``reason``.
-    """
+    """Basic-strategy (plus optional count deviations) still legal after ``policy``."""
     policy = policy or RiskPolicy()
     hand = state.hands[state.active_hand]
     facts = hand_facts(hand.cards, caller_soft=hand.is_soft)
     rules = dict(state.rules)
-    h17 = _hits_soft_17(rules)
-    das = _das(rules)
+    h17 = hits_soft_17(rules)
+    das = das_enabled(rules)
     up = _upcard(state.dealer_upcard)
+    caps = derive_capabilities(state)
     legal = actions_after_policy(state, policy)
-    # Policy emptied the free set: builders offer pass + hold_policy. Chart cells
-    # must not resurrect a filtered hit/double/split/surrender.
+    counting, _rc, tc = _resolve_count(state)
+    _hard, _soft, _pairs, chart_label = select_tables(rules)
+
     if legal == ["pass"]:
         return StrategyAdvice(
             action="pass",
@@ -431,16 +296,90 @@ def recommend_blackjack(state: BlackjackState, policy: RiskPolicy | None = None)
             alternatives=(),
             game="blackjack",
         )
+
+    # Insurance is its own decision only in the insurance phase (or when the
+    # table offers insurance/decline without ordinary hit/double/split moves).
+    play_actions = {"hit", "double", "split", "surrender"}
+    insurance_spot = state.phase == "insurance" or (
+        "insurance" in legal and not (play_actions & set(legal))
+    )
+    if insurance_spot:
+        take = should_take_insurance(tc, counting=counting)
+        if take and "insurance" in legal and caps.get("can_insurance", True):
+            return StrategyAdvice(
+                action="insurance",
+                reason=f"insurance taken (Hi-Lo TC {tc:.2f} ≥ +3, Illustrious #1)",
+                confidence=0.95,
+                alternatives=(("decline", "Illustrious insurance only at TC ≥ +3"),),
+                game="blackjack",
+            )
+        decline = (
+            "decline"
+            if "decline" in legal
+            else next((a for a in ("stand", "hit", "pass") if a in legal), legal[0])
+        )
+        why = (
+            f"insurance declined (EV ≈ −7% without counting; TC {tc:.2f})"
+            if counting
+            else "insurance declined (EV ≈ −7%; counting off)"
+        )
+        return StrategyAdvice(
+            action=decline,
+            reason=why,
+            confidence=0.99,
+            alternatives=(),
+            game="blackjack",
+        )
+
     raw = _unfiltered_prefs(facts, up, rules)
-    prefs = _apply_shape(raw, facts)
+    prefs = list(_apply_shape(raw, facts))
+
+    # Illustrious 18 / Fab 4 override when counting is on.
+    if counting:
+        play = deviation_for(
+            total=facts.total,
+            soft=facts.soft,
+            pair=facts.pair,
+            n_cards=facts.n_cards,
+            up=up,
+            true_count=tc,
+            surrender=surrender_enabled(rules),
+        )
+        if (
+            play is not None
+            and play.action in legal
+            and _shape_ok(play.action, facts, tuple(prefs), caps)
+        ):
+            # Only publish as a deviation when it differs from the chart head,
+            # or when the Illustrious row forces hit below a stand index.
+            chart_head = prefs[0] if prefs else None
+            if play.action != chart_head:
+                return StrategyAdvice(
+                    action=play.action,
+                    reason=(
+                        f"{play.hand_key} vs {up}: {play.action} "
+                        f"({play.family} index {play.index:+d}, TC {tc:.2f}; "
+                        f"overrides {chart_label})"
+                    ),
+                    confidence=0.96,
+                    alternatives=tuple((a, "basic chart") for a in prefs[:2] if a != play.action),
+                    game="blackjack",
+                )
+
     chosen = next(
-        (action for action in prefs if action in legal and _shape_ok(action, facts, prefs)),
+        (
+            action
+            for action in prefs
+            if action in legal and _shape_ok(action, facts, tuple(prefs), caps)
+        ),
         None,
     )
     forced = chosen is None
     if forced:
         free = [
-            action for action in legal if action != "insurance" and _shape_ok(action, facts, prefs)
+            action
+            for action in legal
+            if action not in {"insurance"} and _shape_ok(action, facts, tuple(prefs), caps)
         ]
         if "stand" in free:
             chosen = "stand"
@@ -455,7 +394,7 @@ def recommend_blackjack(state: BlackjackState, policy: RiskPolicy | None = None)
         if action == chosen:
             passed = True
             continue
-        if passed and action in legal and _shape_ok(action, facts, prefs):
+        if passed and action in legal and _shape_ok(action, facts, tuple(prefs), caps):
             alternatives.append((action, f"next chart action if {chosen} is declined"))
     kind = "soft" if facts.soft else "hard"
     if facts.pair and facts.n_cards == 2 and prefs and prefs[0] in {"split", "surrender"}:
@@ -464,7 +403,9 @@ def recommend_blackjack(state: BlackjackState, policy: RiskPolicy | None = None)
         label = f"{kind} {facts.total}"
     rule = "H17" if h17 else "S17"
     das_label = "DAS" if das else "no DAS"
-    bits = [f"{label} vs {up}: {chosen} ({rule}, {das_label}, 4–8 deck chart)"]
+    bits = [f"{label} vs {up}: {chosen} ({rule}, {das_label}, {chart_label})"]
+    if counting:
+        bits.append(f"Hi-Lo TC {tc:.2f}")
     if facts.soft_disagrees:
         bits.append(
             f"recomputed is_soft={facts.soft} (caller said {facts.caller_soft}); using the cards"
@@ -478,18 +419,15 @@ def recommend_blackjack(state: BlackjackState, policy: RiskPolicy | None = None)
         bits.append("surrender not legal, using the next chart action")
     if forced:
         bits.append("chart action is not legal after risk policy; fail-closed")
-    decks = rules.get("decks")
-    if isinstance(decks, (int, float)) and int(decks) in {1, 2}:
-        bits.append(f"{int(decks)}-deck deviations are not applied")
     if _bad_payout(rules):
         bits.append("6:5 blackjack payout is not offset by this chart")
-    if "insurance" in legal and chosen != "insurance":
+    if "insurance" in state.legal_actions and chosen != "insurance":
         bits.append("insurance declined")
     confidence = 0.99
     if not h17:
         confidence = 0.97
-    if isinstance(decks, (int, float)) and int(decks) in {1, 2}:
-        confidence = min(confidence, 0.90)
+    if chart_label.startswith("S17 single"):
+        confidence = min(confidence, 0.95)
     return StrategyAdvice(
         action=chosen,
         reason="; ".join(bits),

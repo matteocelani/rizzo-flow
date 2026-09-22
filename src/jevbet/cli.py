@@ -35,6 +35,27 @@ def _policy_from_args(args) -> RiskPolicy:
     )
 
 
+def _apply_cli_rules(payload: dict, args) -> dict:
+    """Merge --count / --bet into a copy of the game-state rules."""
+    data = dict(payload)
+    rules = dict(data.get("rules") or {})
+    count = getattr(args, "count", None)
+    if count is not None:
+        rules["counting"] = "off" if count in {"off", "none"} else count
+    bet = getattr(args, "bet", None)
+    if bet is not None:
+        rules["bet_system"] = bet
+    data["rules"] = rules
+    return data
+
+
+def _print_bet(advice) -> None:
+    print(
+        f"bet: {advice.amount} ({advice.system}) — {advice.reason}",
+        file=sys.stderr,
+    )
+
+
 def _stub_response(request: Request) -> dict:
     """Deterministic no-weight response for demos and --fake.
 
@@ -171,6 +192,7 @@ def _model_response(args, request: Request):
 
 def cmd_decide(args) -> int:
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    payload = _apply_cli_rules(payload, args)
     policy = _policy_from_args(args)
     try:
         advisor = _advisor_from_args(args)
@@ -182,6 +204,10 @@ def cmd_decide(args) -> int:
         build_request(payload, game=args.game, policy=policy).model_dump()
     )
     advice = recommend(state, policy)
+    if getattr(state, "game", None) == "blackjack":
+        from .strategy.blackjack import recommend_bet_for_state
+
+        _print_bet(recommend_bet_for_state(state, policy))
     if args.schema_only:
         _print_strategy(advice, "schema-only")
         write_json(request.model_dump(), args.output)
@@ -203,6 +229,10 @@ def cmd_decide(args) -> int:
         return 2
     source = "model" if use_model else "strategy"
     response = compose_response(request, advice, model_response, source=source)
+    if getattr(state, "game", None) == "blackjack":
+        from .strategy.blackjack import recommend_bet_for_state
+
+        response["bet"] = recommend_bet_for_state(state, policy).as_dict()
     _print_strategy(advice, source, response)
     _publish(request, response, args.output)
     return 0
@@ -275,6 +305,11 @@ def cmd_play(args) -> int:
         )
         return 2
     policy = _policy_from_args(args)
+    table_rules = {}
+    if getattr(args, "count", None) is not None:
+        table_rules["counting"] = "off" if args.count in {"off", "none"} else args.count
+    if getattr(args, "bet", None) is not None:
+        table_rules["bet_system"] = args.bet
     adapter = MockCasinoAdapter(
         args.game,
         browser=args.browser,
@@ -283,6 +318,7 @@ def cmd_play(args) -> int:
         stop_loss=args.stop_loss,
         port=args.port,
         headless=not args.headed,
+        rules=table_rules or None,
     )
     try:
         driver = adapter.open()
@@ -359,6 +395,28 @@ def main(argv: list[str] | None = None) -> int:
     shared.add_argument("--max-bet-absolute", type=float, default=None)
     shared.add_argument("--min-bet", type=float, default=1.0)
     shared.add_argument("--allow-all-in", action="store_true")
+    shared.add_argument(
+        "--count",
+        choices=("hi-lo", "off"),
+        default=None,
+        help="Hi-Lo counting + Illustrious 18 (default: off / rules.counting)",
+    )
+    shared.add_argument(
+        "--bet",
+        choices=(
+            "flat",
+            "kelly",
+            "kelly_fraction",
+            "ramp",
+            "tc_ramp",
+            "martingale",
+            "martingale_limited",
+            "grand_martingale",
+            "anti_martingale",
+        ),
+        default=None,
+        help="Bet sizing system (default: flat). Martingale family does not beat house edge.",
+    )
 
     decide = commands.add_parser(
         "decide", parents=[shared], help="Game state JSON → Rizzo request/decision"

@@ -5,7 +5,8 @@ a confident, still-legal action is not overridden unless the caller asks for the
 """
 
 from .advice import CONFIDENT_AT, StrategyAdvice
-from .blackjack import hand_facts, recommend_blackjack
+from .betting import recommend_bet
+from .blackjack import hand_facts, recommend_bet_for_state, recommend_blackjack
 from .dispatch import recommend
 from .select import compose_response, should_use_model
 
@@ -15,6 +16,8 @@ __all__ = [
     "compose_response",
     "hand_facts",
     "recommend",
+    "recommend_bet",
+    "recommend_bet_for_state",
     "recommend_blackjack",
     "should_use_model",
 ]

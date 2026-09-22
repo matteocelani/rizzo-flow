@@ -93,6 +93,9 @@ uv run rizzo serve             # http://127.0.0.1:8017
 # Strategy decision, no model and no download (action + reason on stderr, JSON on stdout):
 uv run jevbet decide examples/games/blackjack.json
 
+# Hi-Lo deviations + ramp betting (still strategy-first, no weights):
+uv run jevbet decide examples/games/blackjack.json --count hi-lo --bet ramp --strategy-only
+
 # Print the typed Rizzo request only:
 uv run jevbet decide examples/games/blackjack.json --schema-only
 
@@ -106,6 +109,7 @@ uv run jevbet demo --game holdem
 
 # Decide → act on the in-process mock. Strategy is the default (no 4B download):
 uv run jevbet play --adapter mock-casino --game blackjack --rounds 3
+uv run jevbet play --adapter mock-casino --game blackjack --rounds 5 --count hi-lo --bet kelly --strategy-only
 uv run jevbet play --adapter mock-casino --game holdem --rounds 3
 
 # Same loop, but the stub picks the action (still inside the policy filter):
@@ -135,8 +139,8 @@ Honest split. Nothing here is a claim of profit, and none of it is Spark.
 
 | Game | What you get | What you do not get |
 | --- | --- | --- |
-| Blackjack | Multi-deck **basic strategy**, total-dependent. Full tables `HARD_H17`, `SOFT_H17`, `PAIRS_H17_DAS`, plus complete `HARD_S17`, `SOFT_S17`, `PAIRS_S17_DAS`, `PAIRS_H17_NDAS`, `PAIRS_S17_NDAS` (Blackjack Apprenticeship H17 chart, 2024). One resolver, `lookup(facts, up, rules)`. Soft 18 vs 9 is a **hit**. `double`, `split`, `surrender`, and `insurance` are recommended only from a two-card hand; split only when the pair cell says so. | Card counting, composition-dependent indices, single-deck or double-deck cell changes (the multi-deck chart is still used, and the reason says so), European no-hole-card, early surrender. A 6:5 blackjack payout does **not** change the cells and it does eat the edge the chart was built to protect. Insurance is never taken. |
-| Blackjack rules | `dealer_hits_soft_17` / `dealer_stands_soft_17`, `das`, `surrender`, `decks`, `blackjack_payout`. S17 differs in six cells, stored as full strings: 11 vs A hits; soft 18 vs 2 stands; soft 19 vs 6 stands; 15 vs A and 17 vs A do not surrender; 8s vs A split instead of surrender. No DAS pair strings: 2s and 3s vs 2–3 hit, 4s vs 5–6 hit, 6s vs 2 hit. Stop-loss treats hit, double, split, insurance, and surrender as costly. When that empties the free set, builders and strategy offer `pass` + `hold_policy` — never `legal_actions[0]`. | If the chart says surrender or double or split and that action is not legal after policy **or** the hand has more than two cards, the next chart action is used (surrender → hit, double → hit or stand, split → the hard/soft total). A 3-card soft 18 vs 6 stands. |
+| Blackjack | **Charts:** H17 multi-deck (Blackjack Apprenticeship 2024); S17 multi-deck and S17 single-deck encoded from [blackjacksimulator.net](https://www.blackjacksimulator.net/) tables (independent re-implementation, not affiliated). Selected by `dealer_hits_soft_17` and `rules.decks` (1 → single-deck S17; ≥2 → multi-deck S17; H17 always BJA). **Lifecycle:** insurance phase, split/resplit (max from `rules.resplit`, default 4), split aces one-card, DAS gate. **Counting (opt-in):** Hi-Lo + Illustrious 18 + Fab 4 when `rules.counting: "hi-lo"` or `--count hi-lo`. **Betting:** `flat` / `ramp` / `kelly` / martingale family via `--bet`. | Composition-dependent indices beyond I18/Fab4. Counting needs a full card feed from the table adapter; RNG shoes that reshuffle every hand reset the count. Martingale does **not** overcome house edge. European no-hole-card, early surrender. |
+| Blackjack rules | `dealer_hits_soft_17` / `dealer_stands_soft_17`, `das`, `surrender`, `decks`, `blackjack_payout`, `counting`, `bet_system`, `resplit`, `resplit_aces`, `hit_split_aces`. Insurance declined by default (EV ≈ −7%); taken only with Hi-Lo and TC ≥ +3. Stop-loss treats hit, double, split, insurance, surrender, and bet as costly. | If the chart / deviation says an action that is not legal after policy or lifecycle flags, the next legal chart action is used. |
 | Hold'em | Pot odds `to_call / (pot + to_call)`. **Complete preflop matrix**: all 169 starting hands in Sklansky–Malmuth groups 1–9, with a documented action for an open and for a raise price. Postflop classes from the cards: high pair, top pair, overpair, overcards, OESD, gutshot, flush draw, two pair or better, set, nuts. Raise size is one of the sizes `RiskPolicy` already kept. | Not GTO. No opponent model, no equity solver. Draw “equity” is a fixed approximation (about 35% for a flopped flush draw, and so on), not a simulation. Group 9 (“trash”) facing a bet folds; the nuts does not fold. Marginal pairs are not solved. |
 | Poker italiano | The same preflop matrix and postflop classes on 40-card ranks (Asso = A, Re = T, Cavallo = 9, Fante = 8). Asso is high. Straights use those numbers, so asso does not connect to Re. | Not a solved Italian-deck game. The French 169-hand groups are only an approximation on this deck. |
 | Scopa | Among `legal_plays`: a scopa, else more cards captured, else more sevens (sette bello breaks the next tie), else more denari, else trail the lowest pip (Fante 8, Cavallo 9, Re 10). | Not a search of the remaining deck. No opponent model. |
@@ -151,21 +155,25 @@ removes hit, double, split, call, and raise before this choice is made.
 ## Coverage
 
 What is exhaustive, what is a class heuristic, and what cannot be beaten.
-`tests/test_jevbet_chart_matrix.py` fails if any blackjack cell drifts.
+`tests/test_jevbet_chart_matrix.py` and `tests/test_jevbet_powerups.py` fail if
+charts, Illustrious rows, or bet systems drift.
 
 | Surface | 100% of the defined cases | Deliberately not solved |
 | --- | --- | --- |
-| Blackjack charts | Hard totals **5–21** (17 × 10 = **170**), soft totals **13–21** (9 × 10 = **90**), pairs **A, 2–10** (10 × 10 = **100**). **360** cells on each of four tables (H17+DAS, S17+DAS, H17 no-DAS, S17 no-DAS) = **1440** cells. Every chart string has length 10; missing keys fail at import. Surrender off rewrites R/W/Z to the fallback on those same cells. | Composition-dependent plays, 1- and 2-deck deviations, early surrender, card counting. Infinite-deck or single-shoe exact GTO is not this chart. |
-| Blackjack shape | `double`, `split`, `surrender`, `insurance` only when `n_cards == 2`. Split only from a pair cell that says split. Natural 21, hard 20, and hard 21 stand whenever stand is legal. 3-card soft 18 vs 6 stands (chart `U`, double removed). | A caller can still list an illegal button; the strategy will not take it. |
+| Blackjack charts | Hard **5–21**, soft **13–21**, pairs **A, 2–10** = **360** cells × H17+DAS / H17 no-DAS / S17 multi DAS / S17 multi no-DAS = **1440** cells, plus a full **360**-cell S17 single-deck matrix (`decks: 1`). Site S17 tables from blackjacksimulator.net (“un mazzo” / “più mazzi”); H17 from BJA. | Composition-dependent plays beyond Illustrious 18 / Fab 4. |
+| Blackjack session lifecycle | Insurance phase; split / resplit up to `rules.resplit` (default 4); split aces one card (unless `hit_split_aces` / `resplit_aces`); DAS gated by `rules.das`; flags `can_double` / `can_split` / `can_resplit` / `can_insurance` / `cards_dealt_this_hand`. Mock casino play loop: deal → insurance → act all hands → settle. | Real-casino hole-card timing / Peek rules beyond the mock. |
+| Blackjack counting | Hi-Lo tags 2–6=+1, 7–9=0, 10/A=−1; true count = running / decks_remaining. Illustrious 18 + Fab 4, each row tested just below/above its index. Insurance only at TC ≥ +3 when counting is on. Default `counting: off` = basic chart only. | Counting is useless if the shoe reshuffles every hand (typical RNG online). Needs a full observed-card feed from the table adapter. |
+| Blackjack bet sizing | `flat`, `ramp`/`tc_ramp`, `kelly`/`kelly_fraction`, `martingale`, `martingale_limited`, `grand_martingale`, `anti_martingale`. Stop-loss → bet 0; caps from `RiskPolicy` + table min/max. CLI `--bet` / `--count`. | **Martingale family does not overcome house edge** — table max and bankroll ruin. Prefer ramp/Kelly with a continuous shoe. |
+| Blackjack shape | `double` / `split` / `surrender` / `insurance` only when lifecycle flags and two-card rule allow. | A caller can still list an illegal button; the strategy will not take it. |
 | Hold'em preflop | All **169** hands (13 pairs + 78 suited + 78 offsuit) map to one Sklansky–Malmuth group and then to one action from group × pot odds × seat. | Not GTO. The price cutoffs are documented thresholds for that grouping, not a solved no-limit range. |
 | Hold'em postflop | One flag path each for high pair, top pair, overpair, overcards, OESD, gutshot, flush draw, two pair or better, set, and the nuts. | Not an equity solver. Draw percentages are fixed approximations. |
 | Scopa | Every `legal_plays` entry is scored. Order: scopa, then more cards, then more sevens, then sette bello, then more denari; otherwise the lowest trail. | Not a search of the remaining deck. |
 | Tre sette | Lead, must-follow cheapest winner, trump before a losing card, dump when nothing wins. Rank order Asso, 3, Re, Cavallo, Fante, 7…2, checked across that order. | Not partnership signalling. Not a point-count endgame. |
 | Roulette | All **14** bet types sit in one fixed order, `pass` first. Shuffled `last_results` do not change the action, the reason, or the stake. | Positive EV is impossible. European edge 1/37 ≈ 2.70%. American edge 2/38 ≈ 5.26%. The least-bad forced bet is still negative EV. |
 
-**IT.** Copertura completa sulle celle definibili: basic strategy multi-mazzo (170 hard + 90 soft + 100 coppie, per H17/S17 e DAS/no-DAS; 1440 celle) e tutte le 169 mani preflop. Il postflop, la scopa e il tre sette restano euristiche a classi. La roulette non ha una scelta a valore atteso positivo: l'azione è `pass`.
+**IT.** Copertura: basic strategy H17 BJA + S17 multi/single da blackjacksimulator.net (1440 + 360 celle), ciclo mano completo (insurance/split/assi), Hi-Lo Illustrious 18 + Fab 4 (opt-in), sizing flat/Kelly/ramp/Martingale (quest’ultimo **non** batte il banco). 169 mani preflop Hold'em. Roulette: solo `pass` a EV positivo assente.
 
-**EN.** Full coverage of the defined cells: multi-deck basic strategy (170 hard + 90 soft + 100 pairs, for H17/S17 and DAS/no-DAS; 1440 cells) and all 169 preflop hands. Postflop, scopa, and tre sette stay class heuristics. Roulette has no positive-EV choice: the action is `pass`.
+**EN.** Coverage: H17 BJA + S17 multi/single from blackjacksimulator.net (1440 + 360 cells), full hand lifecycle, opt-in Hi-Lo Illustrious 18 + Fab 4, flat/Kelly/ramp/Martingale sizing (Martingale does **not** beat the house). 169 Hold'em preflop hands. Roulette: `pass` only; no positive EV.
 
 ## Mock first
 
