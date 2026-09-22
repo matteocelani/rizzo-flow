@@ -56,7 +56,10 @@ a filtered action.
 Roulette stop-loss does **not** keep the first bet type. The only offered action is
 `pass` (plus `hold_policy` when that is the sole option), and no stake question is
 asked. Scopa and tre sette do the same with a no-play `pass` when `should_stop` is
-true. Their default policy uses `min_bet=0`, so a fixture with `cash: 0` (not a
+true. Blackjack, Hold'em, and poker italiano do the same when the filter removes
+**every** legal action (stop-loss with only hit/double/call/raise, or Hold'em left
+with only `all_in` while all-in is forbidden). They offer `pass` plus `hold_policy`.
+They do not fall back to `legal_actions[0]` of the unfiltered set. Their default policy uses `min_bet=0`, so a fixture with `cash: 0` (not a
 betting game) still asks for a card; an explicit policy, stop-loss, or take-profit
 does not.
 
@@ -117,8 +120,10 @@ bankroll) and one Texas Hold'em street (fold / check / call / raise, amount inpu
 It is not a real casino, it does not log in anywhere, and it has no credentials.
 
 `examples/mock-casino/adapter.example.json` is the config shape. The default URL
-allowlist is loopback. `load_adapter_config` rejects keys such as `password`,
-`token`, and `cookie`.
+allowlist is loopback. `load_adapter_config` walks every nested object and list
+and rejects credential-shaped keys (`password`, `secret`, `api_key`, `token`,
+`cookie`, `authorization`, and the same names in any casing, including
+`selectors.extra.password`).
 
 ### Adding a site adapter later
 

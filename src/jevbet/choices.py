@@ -11,7 +11,7 @@ cannot start with underscores.
 
 from __future__ import annotations
 
-from rizzo_flow.schema import Option
+from rizzo_flow.schema import ChoiceQuestion, Option
 
 # Not a game action. Documented in docs/jevbet.md.
 HOLD_POLICY = "hold_policy"
@@ -34,6 +34,25 @@ def no_play_options(detail: str) -> list[Option]:
                 ),
             )
         ]
+    )
+
+
+def fail_closed_choice(detail: str) -> ChoiceQuestion:
+    """Sole safe question when the filtered legal set is empty.
+
+    Offers ``pass`` plus ``hold_policy``. Builders must use this instead of
+    putting the unfiltered ``legal_actions[0]`` back in front of the model.
+    """
+    return ChoiceQuestion(
+        type="choice",
+        instructions=(
+            "Session risk policy left no legal action "
+            f"({detail}). Do not stake chips and do not take a filtered move. "
+            "Pass is the only safe action. "
+            "Answer with the letter of the best option."
+        ),
+        options=no_play_options(detail),
+        policy={"allow_abstain": False},
     )
 
 

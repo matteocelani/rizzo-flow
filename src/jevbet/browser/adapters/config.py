@@ -8,6 +8,7 @@ in the file — not even gitignored ones that might be copied into a fixture.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,21 +17,38 @@ from jevbet.browser.chrome import DEFAULT_LOCAL_PREFIXES, SelectorMap, url_is_al
 _ALLOWED_KEYS = frozenset(
     {"comment", "name", "game", "base_url", "selectors", "allowed_url_prefixes", "headless"}
 )
-_SECRET_KEYS = frozenset(
+# Segment names after camelCase / separator normalization. Plurals are handled
+# by stripping a trailing "s". ``api`` + ``key`` is matched as a pair so
+# ``api_key`` / ``apiKey`` / ``API-KEY`` all hit.
+_CREDENTIAL_SEGMENTS = frozenset(
     {
         "password",
-        "username",
-        "user",
+        "passwd",
+        "secret",
         "token",
         "cookie",
-        "cookies",
-        "api_key",
-        "apikey",
-        "secret",
-        "credentials",
         "authorization",
+        "credential",
+        "username",
+        "user",
+        "apikey",
     }
 )
+# Substrings inside one segment (``passwordHash``, ``clientsecret``). ``token``
+# and ``user`` stay exact so words like ``tokenize`` are left alone.
+_CREDENTIAL_SUBSTRINGS = (
+    "password",
+    "passwd",
+    "secret",
+    "apikey",
+    "authorization",
+    "credential",
+    "cookie",
+    "username",
+)
+_CAMEL_BOUNDARY = re.compile(r"([a-z0-9])([A-Z])")
+_ACRONYM_BOUNDARY = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 
 
 @dataclass
@@ -59,8 +77,54 @@ class AdapterConfig:
             )
 
 
+def _normalize_key(key: object) -> str:
+    """Lowercase snake form: ``apiKey`` and ``API-KEY`` both become ``api_key``."""
+    text = _CAMEL_BOUNDARY.sub(r"\1_\2", str(key))
+    text = _ACRONYM_BOUNDARY.sub(r"\1_\2", text)
+    text = _NON_ALNUM.sub("_", text)
+    return text.strip("_").lower()
+
+
+def _is_credential_key(key: object) -> bool:
+    """True when ``key`` looks like a password, token, cookie, or similar secret."""
+    normalized = _normalize_key(key)
+    if not normalized:
+        return False
+    parts = normalized.split("_")
+    for index, part in enumerate(parts):
+        singular = part.removesuffix("s")
+        if part in _CREDENTIAL_SEGMENTS or singular in _CREDENTIAL_SEGMENTS:
+            return True
+        if any(word in part for word in _CREDENTIAL_SUBSTRINGS):
+            return True
+        if part == "api" and index + 1 < len(parts) and parts[index + 1].removesuffix("s") == "key":
+            return True
+    return False
+
+
+def _credential_paths(value: object, prefix: str = "") -> list[str]:
+    """Paths of credential-shaped keys in nested dicts and lists."""
+    found: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            name = str(raw_key)
+            path = f"{prefix}.{name}" if prefix else name
+            if _is_credential_key(raw_key):
+                found.append(path)
+            found.extend(_credential_paths(child, path))
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            found.extend(_credential_paths(child, f"{prefix}[{index}]"))
+    return found
+
+
 def load_adapter_config(path: Path | str) -> AdapterConfig:
-    """Load a user-owned adapter file. Rejects credential-shaped keys."""
+    """Load a user-owned adapter file.
+
+    Credential-shaped keys are rejected anywhere in the document, not only at
+    the top level (``selectors.extra.password``, a nested ``api_key``, and so
+    on). Matching is case-insensitive.
+    """
     file = Path(path)
     text = file.read_text(encoding="utf-8")
     suffix = file.suffix.lower()
@@ -78,8 +142,7 @@ def load_adapter_config(path: Path | str) -> AdapterConfig:
         data = json.loads(text)
     if not isinstance(data, dict):
         raise TypeError("adapter config must be a JSON object")
-    lowered = {str(key).lower() for key in data}
-    leaked = sorted(lowered & _SECRET_KEYS)
+    leaked = sorted(set(_credential_paths(data)))
     if leaked:
         raise ValueError(
             f"Adapter config must not contain credentials ({', '.join(leaked)}). "

@@ -191,6 +191,53 @@ def test_scopa_and_tre_sette_honor_stop_with_pass():
     assert [option.id for option in stopped.questions["card"].options] == ["pass", HOLD_POLICY]
 
 
+def _option_ids(request):
+    return [option.id for option in request.questions["action"].options]
+
+
+def test_empty_filtered_actions_offer_pass_not_the_first_legal_move():
+    """L8: an empty post-policy set must not resurrect legal_actions[0]."""
+    blackjack = json.loads((EXAMPLES / "blackjack.json").read_text(encoding="utf-8"))
+    blackjack["legal_actions"] = ["hit", "double"]
+    blackjack["bankroll"]["session_profit"] = -80
+    blackjack["bankroll"]["stop_loss"] = 50
+    request = build_request(blackjack, policy=RiskPolicy())
+    assert _option_ids(request) == ["pass", HOLD_POLICY]
+    assert request.state["legal_actions_after_policy"] == ["pass"]
+    Request.model_validate(request.model_dump())
+
+    still_open = json.loads((EXAMPLES / "blackjack.json").read_text(encoding="utf-8"))
+    still_open["legal_actions"] = ["hit"]
+    open_request = build_request(still_open, policy=RiskPolicy())
+    assert open_request.questions["action"].options[0].id == "hit"
+
+    holdem = json.loads((EXAMPLES / "holdem.json").read_text(encoding="utf-8"))
+    holdem["legal_actions"] = ["call", "raise"]
+    holdem["bankroll"]["session_profit"] = -80
+    holdem["bankroll"]["stop_loss"] = 50
+    request = build_request(holdem, policy=RiskPolicy())
+    assert _option_ids(request) == ["pass", HOLD_POLICY]
+    assert "raise_amount" not in request.questions
+    assert request.state["legal_actions_after_policy"] == ["pass"]
+
+    holdem["legal_actions"] = ["all_in"]
+    holdem["bankroll"]["session_profit"] = 0
+    holdem["bankroll"].pop("stop_loss", None)
+    blocked = build_request(holdem, policy=RiskPolicy(forbid_all_in=True))
+    assert _option_ids(blocked) == ["pass", HOLD_POLICY]
+    allowed = build_request(holdem, policy=RiskPolicy(forbid_all_in=False))
+    assert allowed.questions["action"].options[0].id == "all_in"
+
+    italian = json.loads((EXAMPLES / "italian_poker.json").read_text(encoding="utf-8"))
+    italian["legal_actions"] = ["call", "raise"]
+    italian["bankroll"]["session_profit"] = -40
+    italian["bankroll"]["stop_loss"] = 20
+    request = build_request(italian, policy=RiskPolicy())
+    assert _option_ids(request) == ["pass", HOLD_POLICY]
+    assert "call" not in _option_ids(request)
+    Request.model_validate(request.model_dump())
+
+
 def test_singleton_games_use_sentinel_not_a_fake_move():
     from jevbet.choices import HOLD_POLICY
 

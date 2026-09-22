@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, Card, Money
-from ..choices import pad_singleton
+from ..choices import fail_closed_choice, pad_singleton
 from ..policy import RiskPolicy
 
 BlackjackAction = Literal["hit", "stand", "double", "split", "surrender", "insurance"]
@@ -55,8 +55,10 @@ class BlackjackState(Strict):
 def build_blackjack_request(state: BlackjackState, policy: RiskPolicy | None = None) -> Request:
     policy = policy or RiskPolicy()
     actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
-    if not actions:
-        actions = ["stand"] if "stand" in state.legal_actions else [state.legal_actions[0]]
+    # Empty: every legal move was costly. Do not resurrect legal_actions[0].
+    fail_closed = not actions
+    if fail_closed:
+        actions = ["pass"]
     hand = state.hands[state.active_hand]
     evidence = {
         "game": "blackjack",
@@ -82,22 +84,22 @@ def build_blackjack_request(state: BlackjackState, policy: RiskPolicy | None = N
         "shoe_penetration": state.shoe_penetration,
         "legal_actions_after_policy": actions,
     }
-    options = pad_singleton(
-        [Option(id=a, description=_ACTION_TEXT.get(a, f"Perform action {a}.")) for a in actions]
-    )
-    return Request(
-        state=evidence,
-        questions={
-            "action": ChoiceQuestion(
-                type="choice",
-                instructions=(
-                    "You are choosing the next legal blackjack action for the active hand. "
-                    "Prefer basic strategy adjusted for the visible dealer upcard and bankroll risk. "
-                    "Answer with the letter of the best option."
-                ),
-                options=options,
-                policy={"allow_abstain": False},
-            )
-        },
-        mode="shared",
-    )
+    if fail_closed:
+        question = fail_closed_choice("no blackjack action left after the risk policy")
+    else:
+        question = ChoiceQuestion(
+            type="choice",
+            instructions=(
+                "You are choosing the next legal blackjack action for the active hand. "
+                "Prefer basic strategy adjusted for the visible dealer upcard and bankroll risk. "
+                "Answer with the letter of the best option."
+            ),
+            options=pad_singleton(
+                [
+                    Option(id=a, description=_ACTION_TEXT.get(a, f"Perform action {a}."))
+                    for a in actions
+                ]
+            ),
+            policy={"allow_abstain": False},
+        )
+    return Request(state=evidence, questions={"action": question}, mode="shared")

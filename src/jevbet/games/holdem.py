@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, NumericQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, Card, Money
-from ..choices import pad_singleton
+from ..choices import fail_closed_choice, pad_singleton
 from ..policy import RiskPolicy
 
 Street = Literal["preflop", "flop", "turn", "river"]
@@ -49,8 +49,11 @@ def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -
     actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
     if policy.forbid_all_in:
         actions = [a for a in actions if a != "all_in"]
-    if not actions:
-        actions = ["fold"] if "fold" in state.legal_actions else [state.legal_actions[0]]
+    # Empty: fold/check were absent and every remaining move was filtered.
+    # Do not resurrect legal_actions[0] (often call, raise, or all_in).
+    fail_closed = not actions
+    if fail_closed:
+        actions = ["pass"]
 
     evidence = {
         "game": "texas_holdem",
@@ -69,34 +72,38 @@ def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -
         "rules": state.rules,
         "legal_actions_after_policy": actions,
     }
-    options = []
-    for action in actions:
-        if action == "fold":
-            desc = "Fold and surrender the pot."
-        elif action == "check":
-            desc = "Check; put no more chips in."
-        elif action == "call":
-            desc = f"Call {state.to_call} to match the current bet."
-        elif action == "raise":
-            desc = f"Raise; minimum {state.min_raise}."
-        else:
-            desc = "Move all-in with the remaining stack."
-        options.append(Option(id=action, description=desc))
-    options = pad_singleton(options)
+    if fail_closed:
+        questions: dict = {
+            "action": fail_closed_choice("no holdem action left after the risk policy")
+        }
+    else:
+        options = []
+        for action in actions:
+            if action == "fold":
+                desc = "Fold and surrender the pot."
+            elif action == "check":
+                desc = "Check; put no more chips in."
+            elif action == "call":
+                desc = f"Call {state.to_call} to match the current bet."
+            elif action == "raise":
+                desc = f"Raise; minimum {state.min_raise}."
+            else:
+                desc = "Move all-in with the remaining stack."
+            options.append(Option(id=action, description=desc))
+        options = pad_singleton(options)
+        questions = {
+            "action": ChoiceQuestion(
+                type="choice",
+                instructions=(
+                    "Choose the best Texas Hold'em action given hole cards, board, pot odds, "
+                    "position, and stack depth. Answer with the letter of the best option."
+                ),
+                options=options,
+                policy={"allow_abstain": False},
+            )
+        }
 
-    questions = {
-        "action": ChoiceQuestion(
-            type="choice",
-            instructions=(
-                "Choose the best Texas Hold'em action given hole cards, board, pot odds, "
-                "position, and stack depth. Answer with the letter of the best option."
-            ),
-            options=options,
-            policy={"allow_abstain": False},
-        )
-    }
-
-    if "raise" in actions:
+    if not fail_closed and "raise" in actions:
         suggestions = list(state.raise_suggestions) or [
             state.min_raise,
             max(state.min_raise, state.pot * 0.5),

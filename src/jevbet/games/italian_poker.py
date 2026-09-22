@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard, Money
-from ..choices import pad_singleton
+from ..choices import fail_closed_choice, pad_singleton
 from ..policy import RiskPolicy
 
 ItalianStreet = Literal["preflop", "flop", "turn", "river", "showdown"]
@@ -48,8 +48,10 @@ def build_italian_poker_request(
 ) -> Request:
     policy = policy or RiskPolicy()
     actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
-    if not actions:
-        actions = ["fold"] if "fold" in state.legal_actions else [state.legal_actions[0]]
+    # Empty: every legal move was a call or a raise. Do not resurrect legal_actions[0].
+    fail_closed = not actions
+    if fail_closed:
+        actions = ["pass"]
     evidence = {
         "game": "italian_poker",
         "street": state.street,
@@ -73,19 +75,16 @@ def build_italian_poker_request(
         "raise": f"Raise; minimum {state.min_raise}.",
         "pass": "Pass according to house rules (no bet).",
     }
-    options = pad_singleton([Option(id=a, description=text.get(a, a)) for a in actions])
-    return Request(
-        state=evidence,
-        questions={
-            "action": ChoiceQuestion(
-                type="choice",
-                instructions=(
-                    "Choose the best poker italiano action given the Italian-deck cards, "
-                    "pot, and house rules in state.rules. Answer with the letter of the best option."
-                ),
-                options=options,
-                policy={"allow_abstain": False},
-            )
-        },
-        mode="shared",
-    )
+    if fail_closed:
+        question = fail_closed_choice("no italian poker action left after the risk policy")
+    else:
+        question = ChoiceQuestion(
+            type="choice",
+            instructions=(
+                "Choose the best poker italiano action given the Italian-deck cards, "
+                "pot, and house rules in state.rules. Answer with the letter of the best option."
+            ),
+            options=pad_singleton([Option(id=a, description=text.get(a, a)) for a in actions]),
+            policy={"allow_abstain": False},
+        )
+    return Request(state=evidence, questions={"action": question}, mode="shared")
