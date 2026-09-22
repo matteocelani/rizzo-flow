@@ -6,9 +6,25 @@ from pathlib import Path
 import pytest
 
 from jevbet.cards import Bankroll, Card, ItalianCard
-from jevbet.games import build_request, load_game_state, register_game
+from jevbet.choices import HOLD_POLICY
+from jevbet.games import build_request, list_games, load_game_state, register_game, unregister_game
 from jevbet.policy import RiskPolicy
 from rizzo_flow.schema import Request
+
+
+@pytest.fixture(autouse=True)
+def unregister_extra_games():
+    """Restore the game registry after every test (L1). Built-ins stay put."""
+    from jevbet.games import registry as reg
+
+    canonical = dict(reg._CANONICAL)
+    games = dict(reg.GAMES)
+    yield
+    reg._CANONICAL.clear()
+    reg._CANONICAL.update(canonical)
+    reg.GAMES.clear()
+    reg.GAMES.update(games)
+
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "games"
 
@@ -87,10 +103,17 @@ def test_register_game_extension_point():
         )
 
     register_game("toy", ToyState, build_toy)
+    assert "toy" in list_games()
     req = build_request(
         {"game": "toy", "legal_actions": ["x", "y"], "bankroll": {"cash": 10}},
     )
     assert req.questions["action"].options[0].id == "x"
+    unregister_game("toy")
+    assert "toy" not in list_games()
+    with pytest.raises(ValueError, match="built-in"):
+        unregister_game("blackjack")
+    with pytest.raises(ValueError, match="Unknown game"):
+        build_request({"game": "toy", "legal_actions": ["x", "y"], "bankroll": {"cash": 10}})
 
 
 def test_load_game_state_requires_game_id():
@@ -127,6 +150,45 @@ def test_stop_loss_never_reintroduces_filtered_actions():
     assert HOLD_POLICY in ids
     assert "call" not in ids and "raise" not in ids
     assert _stub_response(request)["answers"]["action"]["choice"] == "fold"
+
+
+def test_roulette_stop_loss_passes_instead_of_a_costly_bet():
+    """L6: a stopped session must not keep the first stake type."""
+    roulette = json.loads((EXAMPLES / "roulette.json").read_text(encoding="utf-8"))
+    roulette["legal_bet_types"] = ["straight_up", "red"]
+    roulette["bankroll"]["session_profit"] = -80
+    roulette["bankroll"]["stop_loss"] = 50
+    request = build_request(roulette, policy=RiskPolicy())
+    ids = [option.id for option in request.questions["bet_type"].options]
+    assert ids == ["pass", HOLD_POLICY]
+    assert "bet_amount" not in request.questions
+    assert "straight_up" not in ids and "red" not in ids
+
+
+def test_scopa_and_tre_sette_honor_stop_with_pass():
+    """L3: should_stop yields a no-play pass. The default policy does not delete itself."""
+    scopa = json.loads((EXAMPLES / "scopa.json").read_text(encoding="utf-8"))
+    playing = [option.id for option in build_request(scopa).questions["play"].options]
+    assert "p0" in playing
+    assert "pass" not in playing
+    stopped = build_request(scopa, policy=RiskPolicy())
+    assert [option.id for option in stopped.questions["play"].options] == ["pass", HOLD_POLICY]
+
+    scopa["bankroll"]["cash"] = 100
+    scopa["bankroll"]["session_profit"] = -40
+    scopa["bankroll"]["stop_loss"] = 20
+    stopped = build_request(scopa, policy=RiskPolicy(min_bet=0))
+    assert [option.id for option in stopped.questions["play"].options] == ["pass", HOLD_POLICY]
+    assert stopped.state["policy_stop"] is True
+
+    tre = json.loads((EXAMPLES / "tre_sette.json").read_text(encoding="utf-8"))
+    playing = [option.id for option in build_request(tre).questions["card"].options]
+    assert any(option_id.startswith("c") for option_id in playing)
+    tre["bankroll"]["cash"] = 50
+    tre["bankroll"]["session_profit"] = -15
+    tre["bankroll"]["stop_loss"] = 10
+    stopped = build_request(tre, policy=RiskPolicy(min_bet=0))
+    assert [option.id for option in stopped.questions["card"].options] == ["pass", HOLD_POLICY]
 
 
 def test_singleton_games_use_sentinel_not_a_fake_move():

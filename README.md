@@ -523,7 +523,11 @@ It does not fine-tune Spark weights and does not fork the inference path.
 ```bash
 uv run jevbet decide examples/games/blackjack.json --schema-only
 uv run jevbet demo --game blackjack
+uv run jevbet play --adapter mock-casino --game blackjack --rounds 3 --fake
 ```
+
+The play loop hits a local mock table (in-process, or Chromium with `--browser`).
+Real casino sites are not built in; see [docs/jevbet.md](docs/jevbet.md).
 
 ## Development
 

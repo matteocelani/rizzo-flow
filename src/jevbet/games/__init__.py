@@ -10,6 +10,7 @@ from .registry import (
     load_game_state,
     register_game,
     resolve_game_name,
+    unregister_game,
 )
 from .roulette import RouletteState, build_roulette_request
 from .scopa import ScopaState, build_scopa_request
@@ -34,4 +35,5 @@ __all__ = [
     "load_game_state",
     "register_game",
     "resolve_game_name",
+    "unregister_game",
 ]

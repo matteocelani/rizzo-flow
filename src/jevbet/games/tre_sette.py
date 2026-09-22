@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard
-from ..choices import pad_singleton
+from ..choices import no_play_options, pad_singleton
 from ..policy import RiskPolicy
 
 TreSetteAction = Literal["play_card", "pass"]
@@ -37,7 +37,9 @@ class TreSetteState(Strict):
 
 
 def build_tre_sette_request(state: TreSetteState, policy: RiskPolicy | None = None) -> Request:
-    del policy  # card games without chip bets still carry bankroll for session stops
+    # min_bet 0 so a non-betting fixture (cash 0) still asks for a card.
+    # Stop-loss / take-profit / an explicit policy yield a pass, not a forced card.
+    policy = policy or RiskPolicy(min_bet=0.0)
     cards = state.legal_cards
     evidence = {
         "game": "tre_sette",
@@ -50,8 +52,26 @@ def build_tre_sette_request(state: TreSetteState, policy: RiskPolicy | None = No
         "points_them": state.points_them,
         "bankroll_cash": state.bankroll.cash,
         "rules": state.rules,
+        "policy_stop": policy.should_stop(state.bankroll),
         "legal_cards": [c.label() for c in cards],
     }
+    if policy.should_stop(state.bankroll):
+        return Request(
+            state=evidence,
+            questions={
+                "card": ChoiceQuestion(
+                    type="choice",
+                    instructions=(
+                        "Session risk policy says stop. Do not play a card. "
+                        "Pass is the only legal action. "
+                        "Answer with the letter of the best option."
+                    ),
+                    options=no_play_options("tre sette"),
+                    policy={"allow_abstain": False},
+                )
+            },
+            mode="shared",
+        )
     # Option IDs must match schema pattern: alphanumeric + _-
     options = []
     for i, card in enumerate(cards):

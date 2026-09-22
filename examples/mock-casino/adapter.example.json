@@ -1,0 +1,22 @@
+{
+  "comment": "Local mock only. Copy this file to describe a site you control. Never put passwords, cookies, or tokens here.",
+  "name": "mock-casino",
+  "game": "blackjack",
+  "base_url": "http://127.0.0.1:8765/blackjack.html",
+  "allowed_url_prefixes": [
+    "http://127.0.0.1",
+    "http://localhost"
+  ],
+  "headless": true,
+  "selectors": {
+    "table_root": "#table",
+    "bankroll": "[data-bankroll]",
+    "action_buttons": "button[data-action]",
+    "amount_input": "input[data-amount]",
+    "player_cards": "[data-role=player][data-cards]",
+    "dealer_upcard": "[data-role=dealer][data-upcard]",
+    "hole_cards": "[data-role=hero][data-cards]",
+    "community": "[data-role=board][data-cards]",
+    "pot": "[data-pot]"
+  }
+}

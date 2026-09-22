@@ -40,6 +40,8 @@ GAMES: dict[str, tuple[type, Builder]] = {
     **{alias: _CANONICAL[target] for alias, target in _ALIASES.items()},
 }
 
+_BUILTINS = frozenset(_CANONICAL)
+
 
 def register_game(name: str, state_cls: type, builder: Builder) -> None:
     """Extension point: register another card/betting game without touching Rizzo core."""
@@ -48,6 +50,26 @@ def register_game(name: str, state_cls: type, builder: Builder) -> None:
         raise ValueError("game name must be non-empty")
     GAMES[key] = (state_cls, builder)
     _CANONICAL[key] = (state_cls, builder)
+
+
+def unregister_game(name: str) -> None:
+    """Remove a game added with ``register_game``.
+
+    Built-in games and their aliases stay registered. Tests use this (and a
+    registry snapshot fixture) so an extension does not leak into later tests.
+    """
+    key = name.strip().lower().replace(" ", "_")
+    if not key:
+        raise ValueError("game name must be non-empty")
+    if key in _ALIASES or key in _BUILTINS:
+        raise ValueError(f"Refusing to unregister built-in game {key!r}")
+    if key not in _CANONICAL:
+        raise ValueError(f"Unknown game {name!r}")
+    _CANONICAL.pop(key, None)
+    GAMES.pop(key, None)
+    for alias, target in _ALIASES.items():
+        if target == key:
+            GAMES.pop(alias, None)
 
 
 def resolve_game_name(name: str) -> str:

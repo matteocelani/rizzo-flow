@@ -105,6 +105,24 @@ def _stub_response(request: Request) -> dict:
     }
 
 
+def _post_decision(url: str, request: Request, timeout: float) -> dict:
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(request.model_dump()).encode("utf-8")
+    req = urllib.request.Request(
+        url.rstrip("/") + "/v1/decisions",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Failed to reach Rizzo at {url}: {exc}") from exc
+
+
 def cmd_decide(args) -> int:
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
     policy = _policy_from_args(args)
@@ -116,22 +134,12 @@ def cmd_decide(args) -> int:
         write_json(body, args.output)
         return 0
     if args.url:
-        import urllib.error
-        import urllib.request
-
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            args.url.rstrip("/") + "/v1/decisions",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-                _publish(request, json.loads(resp.read().decode("utf-8")), args.output)
-        except urllib.error.URLError as exc:
-            print(f"Failed to reach Rizzo at {args.url}: {exc}", file=sys.stderr)
+            response = _post_decision(args.url, request, args.timeout)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
             return 1
+        _publish(request, response, args.output)
         return 0
     if args.fake:
         _publish(request, _stub_response(request), args.output)
@@ -201,6 +209,87 @@ def cmd_demo(args) -> int:
     return 0
 
 
+def cmd_play(args) -> int:
+    """Mock casino: read → decide → act, for ``--rounds`` decisions."""
+    from .browser.adapters import MockCasinoAdapter
+    from .play import run_play_loop
+
+    if args.rounds < 1 or args.rounds > 100:
+        print("rounds must be between 1 and 100", file=sys.stderr)
+        return 2
+    if not args.schema_only and not args.fake and not args.url:
+        print(
+            "pass --fake, --url, or --schema-only "
+            "(jevbet play does not download or load the 4B weights)",
+            file=sys.stderr,
+        )
+        return 2
+    policy = _policy_from_args(args)
+    adapter = MockCasinoAdapter(
+        args.game,
+        browser=args.browser,
+        seed=args.seed,
+        cash=args.bankroll,
+        stop_loss=args.stop_loss,
+        port=args.port,
+        headless=not args.headed,
+    )
+    try:
+        driver = adapter.open()
+        if args.schema_only:
+            outcome = run_play_loop(
+                driver,
+                game=args.game,
+                rounds=args.rounds,
+                policy=policy,
+                decide=None,
+                schema_only=True,
+            )
+            write_json(outcome["request"], args.output)
+            return 0
+
+        def decide(request: Request) -> dict:
+            if args.fake:
+                return _stub_response(request)
+            return _post_decision(args.url, request, args.timeout)
+
+        outcome = run_play_loop(
+            driver,
+            game=args.game,
+            rounds=args.rounds,
+            policy=policy,
+            decide=decide,
+            schema_only=False,
+        )
+    except (RuntimeError, ImportError, ValueError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        adapter.close()
+    outcome["adapter"] = "mock-casino"
+    outcome["driver"] = "playwright" if args.browser else "in-process"
+    for row in outcome["hands"]:
+        print(
+            f"round {row['round']}: choice={row['choice']} applied={row['applied']} "
+            f"amount={row['amount']} cash={row['bankroll_cash']} "
+            f"profit={row['session_profit']} spot={row['spot']}",
+            file=sys.stderr,
+        )
+    if outcome["stopped"]:
+        print(f"stopped: {outcome['stop_reason']}", file=sys.stderr)
+    summary = {
+        "adapter": outcome["adapter"],
+        "driver": outcome["driver"],
+        "game": outcome["game"],
+        "rounds_requested": outcome["rounds_requested"],
+        "stopped": outcome["stopped"],
+        "stop_reason": outcome["stop_reason"],
+        "hands": outcome["hands"],
+    }
+    write_json(summary, args.output)
+    return 0
+
+
 def cmd_games(_args) -> int:
     write_json(list_games(), None)
     return 0
@@ -249,11 +338,46 @@ def main(argv: list[str] | None = None) -> int:
 
     commands.add_parser("games", help="List built-in games")
 
+    play = commands.add_parser(
+        "play",
+        parents=[shared],
+        help="Play the local mock casino (in-process, or Chromium with --browser)",
+    )
+    play.add_argument("--adapter", required=True, choices=("mock-casino",))
+    play.add_argument("--game", required=True, choices=("blackjack", "holdem"))
+    play.add_argument("--rounds", type=int, default=1)
+    play.add_argument("--fake", action="store_true", help="Stub decision without loading weights")
+    play.add_argument(
+        "--schema-only",
+        action="store_true",
+        help="Print one /v1/decisions request and do not act",
+    )
+    play.add_argument("--url", help="POST each decision to a running Rizzo server")
+    play.add_argument("--timeout", type=float, default=120.0)
+    play.add_argument("--output")
+    play.add_argument(
+        "--browser",
+        action="store_true",
+        help="Serve the HTML mock and drive it with Playwright Chromium",
+    )
+    play.add_argument("--headed", action="store_true", help="Show the Chromium window")
+    play.add_argument("--port", type=int, default=0, help="Loopback port (0 picks a free port)")
+    play.add_argument("--seed", type=int, default=7)
+    play.add_argument("--bankroll", type=float, default=500.0)
+    play.add_argument(
+        "--stop-loss",
+        type=float,
+        default=None,
+        help="Stop the session when profit falls to -stop-loss (stored on the bankroll)",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "decide":
         return cmd_decide(args)
     if args.command == "demo":
         return cmd_demo(args)
+    if args.command == "play":
+        return cmd_play(args)
     if args.command == "games":
         return cmd_games(args)
     raise AssertionError(args.command)

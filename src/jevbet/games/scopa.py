@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from rizzo_flow.schema import ChoiceQuestion, Option, Request, Strict
 
 from ..cards import Bankroll, ItalianCard
-from ..choices import pad_singleton
+from ..choices import no_play_options, pad_singleton
 from ..policy import RiskPolicy
 
 
@@ -39,7 +39,9 @@ class ScopaState(Strict):
 
 
 def build_scopa_request(state: ScopaState, policy: RiskPolicy | None = None) -> Request:
-    del policy
+    # min_bet 0 so a non-betting fixture (cash 0) is not treated as stopped.
+    # An explicit policy, stop-loss, or take-profit still forces a no-play pass.
+    policy = policy or RiskPolicy(min_bet=0.0)
     evidence = {
         "game": "scopa",
         "hand": [c.label() for c in state.hand],
@@ -48,6 +50,7 @@ def build_scopa_request(state: ScopaState, policy: RiskPolicy | None = None) -> 
         "captured_them": state.captured_them,
         "bankroll_cash": state.bankroll.cash,
         "rules": state.rules,
+        "policy_stop": policy.should_stop(state.bankroll),
         "legal_plays": [
             {
                 "hand_card": p.hand_card.label(),
@@ -57,6 +60,23 @@ def build_scopa_request(state: ScopaState, policy: RiskPolicy | None = None) -> 
             for p in state.legal_plays
         ],
     }
+    if policy.should_stop(state.bankroll):
+        return Request(
+            state=evidence,
+            questions={
+                "play": ChoiceQuestion(
+                    type="choice",
+                    instructions=(
+                        "Session risk policy says stop. Do not capture or trail a card. "
+                        "Pass is the only legal action. "
+                        "Answer with the letter of the best option."
+                    ),
+                    options=no_play_options("scopa"),
+                    policy={"allow_abstain": False},
+                )
+            },
+            mode="shared",
+        )
     options = []
     for i, play in enumerate(state.legal_plays[:26]):
         captured = ", ".join(c.label() for c in play.table_cards) or "nothing (trail)"
