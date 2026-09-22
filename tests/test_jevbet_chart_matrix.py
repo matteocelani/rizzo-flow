@@ -21,12 +21,16 @@ from jevbet.strategy.blackjack import (
     DEALER_UPCARDS,
     HARD_H17,
     HARD_S17,
+    HARD_S17_1D,
     PAIRS_H17_DAS,
     PAIRS_H17_NDAS,
+    PAIRS_S17_1D_DAS,
+    PAIRS_S17_1D_NDAS,
     PAIRS_S17_DAS,
     PAIRS_S17_NDAS,
     SOFT_H17,
     SOFT_S17,
+    SOFT_S17_1D,
     hand_facts,
     lookup,
     recommend_blackjack,
@@ -54,7 +58,26 @@ GOLD_HARD_H17 = {
     20: "SSSSSSSSSS",
     21: "SSSSSSSSSS",
 }
-GOLD_HARD_S17 = {**GOLD_HARD_H17, 11: "DDDDDDDDDH", 15: "SSSSSHHHHH", 17: "SSSSSSSSSS"}
+# blackjacksimulator.net multi-deck S17 ("più mazzi")
+GOLD_HARD_S17 = {
+    5: "HHHHHHHHHH",
+    6: "HHHHHHHHHH",
+    7: "HHHHHHHHHH",
+    8: "HHHHHHHHHH",
+    9: "HDDDDHHHHH",
+    10: "DDDDDDDDHH",
+    11: "DDDDDDDDDH",
+    12: "HHSSSHHHHH",
+    13: "SSSSSHHHHH",
+    14: "SSSSSHHHHH",
+    15: "SSSSSHHHRH",
+    16: "SSSSSHHRRR",
+    17: "SSSSSSSSSS",
+    18: "SSSSSSSSSS",
+    19: "SSSSSSSSSS",
+    20: "SSSSSSSSSS",
+    21: "SSSSSSSSSS",
+}
 GOLD_SOFT_H17 = {
     13: "HHHDDHHHHH",
     14: "HHHDDHHHHH",
@@ -66,7 +89,17 @@ GOLD_SOFT_H17 = {
     20: "SSSSSSSSSS",
     21: "SSSSSSSSSS",
 }
-GOLD_SOFT_S17 = {**GOLD_SOFT_H17, 18: "SUUUUSSHHH", 19: "SSSSSSSSSS"}
+GOLD_SOFT_S17 = {
+    13: "HHHDDHHHHH",
+    14: "HHHDDHHHHH",
+    15: "HHDDDHHHHH",
+    16: "HHDDDHHHHH",
+    17: "HDDDDHHHHH",
+    18: "SUUUUSSHHH",
+    19: "SSSSSSSSSS",
+    20: "SSSSSSSSSS",
+    21: "SSSSSSSSSS",
+}
 GOLD_PAIRS_H17_DAS = {
     "A": "YYYYYYYYYY",
     "10": "SSSSSSSSSS",
@@ -79,7 +112,18 @@ GOLD_PAIRS_H17_DAS = {
     "3": "YYYYYY....",
     "2": "YYYYYY....",
 }
-GOLD_PAIRS_S17_DAS = {**GOLD_PAIRS_H17_DAS, "8": "YYYYYYYYYY"}
+GOLD_PAIRS_S17_DAS = {
+    "A": "YYYYYYYYYY",
+    "10": "SSSSSSSSSS",
+    "9": "YYYYYSYYSS",
+    "8": "YYYYYYYYYY",
+    "7": "YYYYYY....",
+    "6": ".YYYY.....",
+    "5": "..........",
+    "4": "..........",
+    "3": "..YYYY....",
+    "2": "..YYYY....",
+}
 GOLD_PAIRS_H17_NDAS = {
     **GOLD_PAIRS_H17_DAS,
     "6": ".YYYY.....",
@@ -87,7 +131,55 @@ GOLD_PAIRS_H17_NDAS = {
     "3": "..YYYY....",
     "2": "..YYYY....",
 }
-GOLD_PAIRS_S17_NDAS = {**GOLD_PAIRS_H17_NDAS, "8": "YYYYYYYYYY"}
+GOLD_PAIRS_S17_NDAS = dict(GOLD_PAIRS_S17_DAS)
+
+# blackjacksimulator.net single-deck S17 ("un mazzo")
+GOLD_HARD_S17_1D = {
+    5: "HHHHHHHHHH",
+    6: "HHHHHHHHHH",
+    7: "HHHHHHHHHH",
+    8: "HHHDDHHHHH",
+    9: "DDDDDHHHHH",
+    10: "DDDDDDDDHH",
+    11: "DDDDDDDDDD",
+    12: "HHSSSHHHHH",
+    13: "SSSSSHHHHH",
+    14: "SSSSSHHHHH",
+    15: "SSSSSHHHHH",
+    16: "SSSSSHHHRR",
+    17: "SSSSSSSSSS",
+    18: "SSSSSSSSSS",
+    19: "SSSSSSSSSS",
+    20: "SSSSSSSSSS",
+    21: "SSSSSSSSSS",
+}
+GOLD_SOFT_S17_1D = {
+    13: "HHHDDHHHHH",
+    14: "HHHDDHHHHH",
+    15: "HHDDDHHHHH",
+    16: "HHDDDHHHHH",
+    17: "DDDDDHHHHH",
+    18: "SUUUUSSHHS",
+    19: "SSSSUSSSSS",
+    20: "SSSSSSSSSS",
+    21: "SSSSSSSSSS",
+}
+GOLD_PAIRS_S17_1D_DAS = {
+    "A": "YYYYYYYYYY",
+    "10": "SSSSSSSSSS",
+    "9": "YYYYYSYYSS",
+    "8": "YYYYYYYYYY",
+    "7": "YYYYYYHHWH",
+    "6": "YYYYY.....",
+    "5": "..........",
+    "4": "..........",
+    "3": "HHYYYY....",
+    "2": "HYYYYY....",
+}
+GOLD_PAIRS_S17_1D_NDAS = {
+    **GOLD_PAIRS_S17_1D_DAS,
+    "6": ".YYYY.....",
+}
 
 _CODE = {
     "H": ("hit",),
@@ -232,12 +324,24 @@ def test_chart_strings_are_complete_at_import():
     tables = {
         "HARD_H17": (HARD_H17, GOLD_HARD_H17, list(range(5, 22))),
         "HARD_S17": (HARD_S17, GOLD_HARD_S17, list(range(5, 22))),
+        "HARD_S17_1D": (HARD_S17_1D, GOLD_HARD_S17_1D, list(range(5, 22))),
         "SOFT_H17": (SOFT_H17, GOLD_SOFT_H17, list(range(13, 22))),
         "SOFT_S17": (SOFT_S17, GOLD_SOFT_S17, list(range(13, 22))),
+        "SOFT_S17_1D": (SOFT_S17_1D, GOLD_SOFT_S17_1D, list(range(13, 22))),
         "PAIRS_H17_DAS": (PAIRS_H17_DAS, GOLD_PAIRS_H17_DAS, list(GOLD_PAIRS_H17_DAS)),
         "PAIRS_S17_DAS": (PAIRS_S17_DAS, GOLD_PAIRS_S17_DAS, list(GOLD_PAIRS_S17_DAS)),
         "PAIRS_H17_NDAS": (PAIRS_H17_NDAS, GOLD_PAIRS_H17_NDAS, list(GOLD_PAIRS_H17_NDAS)),
         "PAIRS_S17_NDAS": (PAIRS_S17_NDAS, GOLD_PAIRS_S17_NDAS, list(GOLD_PAIRS_S17_NDAS)),
+        "PAIRS_S17_1D_DAS": (
+            PAIRS_S17_1D_DAS,
+            GOLD_PAIRS_S17_1D_DAS,
+            list(GOLD_PAIRS_S17_1D_DAS),
+        ),
+        "PAIRS_S17_1D_NDAS": (
+            PAIRS_S17_1D_NDAS,
+            GOLD_PAIRS_S17_1D_NDAS,
+            list(GOLD_PAIRS_S17_1D_NDAS),
+        ),
     }
     for name, (module, gold, keys) in tables.items():
         assert list(module) == keys, name
@@ -245,6 +349,66 @@ def test_chart_strings_are_complete_at_import():
         for key, row in module.items():
             assert len(row) == 10, f"{name}[{key}]"
             assert len(gold[key]) == 10
+
+
+def test_single_deck_s17_matrix_covers_every_cell():
+    """360 cells for the blackjacksimulator.net single-deck S17 table."""
+    mismatches: list[str] = []
+    seen = 0
+    rules = {
+        "decks": 1,
+        "dealer_hits_soft_17": False,
+        "das": True,
+        "surrender": "late",
+    }
+    hard, soft, pairs = GOLD_HARD_S17_1D, GOLD_SOFT_S17_1D, GOLD_PAIRS_S17_1D_DAS
+    for total in range(5, 22):
+        cards = _hard_cards(total)
+        for up in _UPS:
+            seen += 1
+            _check(
+                mismatches,
+                label=f"1D S17 hard {total} vs {up}",
+                cards=cards,
+                up=up,
+                rules=rules,
+                hard=hard,
+                soft=soft,
+                pairs=pairs,
+                surrender=True,
+            )
+    for total in range(13, 22):
+        cards = _soft_cards(total)
+        for up in _UPS:
+            seen += 1
+            _check(
+                mismatches,
+                label=f"1D S17 soft {total} vs {up}",
+                cards=cards,
+                up=up,
+                rules=rules,
+                hard=hard,
+                soft=soft,
+                pairs=pairs,
+                surrender=True,
+            )
+    for rank in ("A", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
+        cards = _pair_cards(rank)
+        for up in _UPS:
+            seen += 1
+            _check(
+                mismatches,
+                label=f"1D S17 pair {rank} vs {up}",
+                cards=cards,
+                up=up,
+                rules=rules,
+                hard=hard,
+                soft=soft,
+                pairs=pairs,
+                surrender=True,
+            )
+    assert seen == 360
+    assert mismatches == []
 
 
 def test_matrix_covers_every_cell_for_every_ruleset():

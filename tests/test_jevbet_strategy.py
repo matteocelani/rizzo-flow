@@ -608,11 +608,12 @@ def test_play_loop_uses_strategy_by_default():
         decide=None,
         advisor="strategy",
     )
-    # Seed 7, S17 (the mock stands on soft 17). Dealer hits consume the shoe,
-    # so this is not three fresh deals: 18 vs 10 stands, 14 vs 7 hits (and busts),
-    # 11 vs ace hits — the S17 cell, not a double.
-    assert [row["choice"] for row in outcome["hands"]] == ["stand", "hit", "hit"]
-    assert [row["spot"] for row in outcome["hands"]] == ["810 vs K", "59 vs 7", "47 vs A"]
+    # Seed 7, S17. Decisions are per action, including insurance declines when
+    # the dealer shows an ace: 18 vs 10 stands, 14 vs 7 hits, then decline
+    # insurance vs ace before the hard-11 play.
+    assert [row["choice"] for row in outcome["hands"]] == ["stand", "hit", "decline"]
+    assert [row["spot"] for row in outcome["hands"][:2]] == ["810 vs K", "59 vs 7"]
+    assert outcome["hands"][2]["choice"] == "decline"
     assert all(row["decision_source"] == "strategy" and row["applied"] for row in outcome["hands"])
 
     def explode(_request):
