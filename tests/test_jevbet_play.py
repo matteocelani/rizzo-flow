@@ -196,6 +196,63 @@ def test_cli_play_fake_and_schema_only(tmp_path):
     assert main(["play", "--adapter", "mock-casino", "--game", "blackjack", "--rounds", "1"]) == 2
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "password",
+        "Password",
+        "secret",
+        "api_key",
+        "API_KEY",
+        "apiKey",
+        "token",
+        "access_token",
+        "cookie",
+        "authorization",
+        "Authorization",
+        "username",
+        "user",
+    ],
+)
+def test_nested_credential_keys_are_rejected(tmp_path, key):
+    """L7: credential-shaped keys are rejected anywhere, not only at the root."""
+    payload = {
+        "game": "blackjack",
+        "base_url": "http://127.0.0.1/blackjack.html",
+        "selectors": {"extra": {key: "nope"}},
+    }
+    path = tmp_path / "nested.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="credentials") as exc:
+        load_adapter_config(path)
+    assert f"selectors.extra.{key}" in str(exc.value)
+
+
+def test_credential_key_inside_a_nested_list_is_rejected(tmp_path):
+    payload = {
+        "game": "blackjack",
+        "base_url": "http://127.0.0.1/blackjack.html",
+        "hooks": [{"authorization": "Bearer x"}],
+    }
+    path = tmp_path / "listed.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="credentials") as exc:
+        load_adapter_config(path)
+    assert "hooks[0].authorization" in str(exc.value)
+
+
+def test_nested_non_secret_selector_extra_is_kept(tmp_path):
+    payload = {
+        "game": "blackjack",
+        "base_url": "http://127.0.0.1/blackjack.html",
+        "selectors": {"extra": {"seat_label": "hero"}},
+    }
+    path = tmp_path / "ok.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    loaded = load_adapter_config(path)
+    assert loaded.selectors.extra["seat_label"] == "hero"
+
+
 def test_adapter_example_is_loopback_and_rejects_secrets(tmp_path):
     config = load_adapter_config(EXAMPLE)
     assert config.game == "blackjack"
