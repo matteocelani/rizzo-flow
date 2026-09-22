@@ -89,7 +89,7 @@ def test_insurance_declined_at_tc_0_taken_at_tc_3():
     [(h, u, i, a) for h, u, i, a in ILLUSTRIOUS_18 if h != "INS"],
 )
 def test_illustrious_18_threshold(hand, up, index, action):
-    """At/above index → listed action; just below → hit (Illustrious rule)."""
+    """At/above index → deviation; below index → same as basic chart (counting off)."""
     if hand.startswith("P"):
         rank = hand[1:]
         token = "10" if rank == "10" else rank
@@ -117,12 +117,38 @@ def test_illustrious_18_threshold(hand, up, index, action):
     legal = ["hit", "stand", "double", "split", "surrender"]
     above = _bj_count(cards, up, legal, true_count=float(index))
     below = _bj_count(cards, up, legal, true_count=index - 0.01)
+    basic = below.model_copy(update={"rules": {**dict(below.rules), "counting": "off"}})
     assert recommend_blackjack(above).action == action
-    below_action = recommend_blackjack(below).action
-    # Below the index the Illustrious rule is hit (may still match basic).
-    if action != "hit":
-        assert below_action == "hit" or "illustrious18" not in recommend_blackjack(below).reason
-    assert recommend_blackjack(below).action in legal
+    below_advice = recommend_blackjack(below)
+    basic_advice = recommend_blackjack(basic)
+    assert below_advice.action == basic_advice.action
+    assert "illustrious18" not in below_advice.reason
+
+
+def test_pair_tens_vs_5_below_split_index_stands_not_hits():
+    """H-I18-BELOW regression: P10 vs 5 at TC 4.99 must stand (basic), not hit."""
+    legal = ["hit", "stand", "double", "split", "surrender"]
+    below = _bj_count(["10H", "10D"], "5", legal, true_count=4.99)
+    off = below.model_copy(update={"rules": {**dict(below.rules), "counting": "off"}})
+    assert recommend_blackjack(off).action == "stand"
+    advice = recommend_blackjack(below)
+    assert advice.action == "stand"
+    assert advice.action != "hit"
+    assert "illustrious18" not in advice.reason
+    at_index = _bj_count(["10H", "10D"], "5", legal, true_count=5.0)
+    assert recommend_blackjack(at_index).action == "split"
+
+
+def test_hard_16_vs_10_below_zero_keeps_chart_surrender():
+    """Below stand-at-0, do not invent hit over surrender."""
+    legal = ["hit", "stand", "surrender"]
+    below = _bj_count(["10H", "6D"], "10", legal, true_count=-0.01)
+    off = below.model_copy(update={"rules": {**dict(below.rules), "counting": "off"}})
+    assert recommend_blackjack(off).action == "surrender"
+    assert recommend_blackjack(below).action == "surrender"
+    assert recommend_blackjack(_bj_count(["10H", "6D"], "10", legal, true_count=0.0)).action == (
+        "stand"
+    )
 
 
 @pytest.mark.parametrize("hand,up,index,action", list(FAB_4))

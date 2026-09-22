@@ -88,32 +88,33 @@ def deviation_for(
     true_count: float,
     surrender: bool,
 ) -> IndexPlay | None:
-    """Matching Illustrious 18 / Fab 4 row for this spot.
+    """Matching Illustrious 18 / Fab 4 row for this spot, or ``None``.
+
+    Illustrious / Fab 4 fire only when TC ≥ the published index. Below the
+    index there is **no** deviation — callers must keep basic strategy. Never
+    invent ``hit`` as an under-threshold default (that would turn tens vs 5
+    into a hit at TC 4.99).
 
     Prefer Illustrious stand/double/split when TC ≥ that index (e.g. 15 vs 10
     stands at +4 rather than Fab 4 surrender). Fab 4 applies when TC ≥ its
-    surrender index and the Illustrious stand index is not yet reached.
-    Below an Illustrious index the rule is hit.
+    surrender index and no Illustrious row already matched at/above index.
     """
     keys = set(_hand_keys(total=total, soft=soft, pair=pair, n_cards=n_cards))
     if not keys:
         return None
-    matched_i18: tuple[str, str, int, str] | None = None
     for hand, dealer, index, action in ILLUSTRIOUS_18:
         if hand == "INS":
             continue
         if hand in keys and dealer == up:
-            matched_i18 = (hand, dealer, index, action)
             if true_count >= index:
                 return IndexPlay(hand, dealer, index, action, "illustrious18")
+            # Below this Illustrious index: still allow Fab 4 if its own
+            # threshold is met (e.g. 15 vs 10 surrenders at 0..+3).
             break
     if surrender:
         for hand, dealer, index, action in FAB_4:
             if hand in keys and dealer == up and true_count >= index:
                 return IndexPlay(hand, dealer, index, action, "fab4")
-    if matched_i18 is not None:
-        hand, dealer, index, _action = matched_i18
-        return IndexPlay(hand, dealer, index, "hit", "illustrious18")
     return None
 
 
