@@ -47,6 +47,13 @@ class ItalianCard(Strict):
     def label(self) -> str:
         return f"{self.rank}-{self.suit}"
 
+    def scopa_pips(self) -> int:
+        """Face value when a scopa capture sums pips (Fante 8, Cavallo 9, Re 10)."""
+        faces = {"Fante": 8, "Cavallo": 9, "Re": 10}
+        if self.rank in faces:
+            return faces[self.rank]
+        return int(self.rank)
+
     @classmethod
     def parse(cls, text: str) -> "ItalianCard":
         raw = text.strip().lower().replace(" ", "")
@@ -66,6 +73,10 @@ class ItalianCard(Strict):
             "5": "5",
             "6": "6",
             "7": "7",
+            # Some 40-card notations number the face cards 8 / 9 / 10.
+            "8": "fante",
+            "9": "cavallo",
+            "10": "re",
             "f": "fante",
             "fante": "fante",
             "j": "fante",

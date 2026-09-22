@@ -68,18 +68,22 @@ _BET_TEXT = {
 }
 
 
+def offers_after_policy(state: RouletteState, policy: RiskPolicy) -> tuple[list[str], list[float]]:
+    """Bet types and chip sizes after stop-loss.
+
+    A stopped session offers only ``pass``, even when the table omitted it.
+    """
+    if policy.should_stop(state.bankroll):
+        return ["pass"], []
+    chips = policy.filter_bet_sizes(state.bankroll, list(state.chip_values))
+    if state.max_bet is not None:
+        chips = [c for c in chips if c <= state.max_bet + 1e-9]
+    return list(state.legal_bet_types), chips
+
+
 def build_roulette_request(state: RouletteState, policy: RiskPolicy | None = None) -> Request:
     policy = policy or RiskPolicy(min_bet=state.min_bet)
-    # Stop-loss must not keep the first costly type (straight_up, red, ...).
-    # Pass is the only safe action, even when the table omitted it.
-    if policy.should_stop(state.bankroll):
-        types = ["pass"]
-        chips: list[float] = []
-    else:
-        types = list(state.legal_bet_types)
-        chips = policy.filter_bet_sizes(state.bankroll, list(state.chip_values))
-        if state.max_bet is not None:
-            chips = [c for c in chips if c <= state.max_bet + 1e-9]
+    types, chips = offers_after_policy(state, policy)
     evidence = {
         "game": "roulette",
         "wheel": state.wheel,

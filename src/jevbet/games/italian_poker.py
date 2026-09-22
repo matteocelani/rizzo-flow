@@ -13,7 +13,7 @@ from ..policy import RiskPolicy
 ItalianStreet = Literal["preflop", "flop", "turn", "river", "showdown"]
 ItalianAction = Literal["fold", "check", "call", "raise", "pass"]
 
-_COSTLY = frozenset({"call", "raise"})
+COSTLY_ACTIONS = frozenset({"call", "raise"})
 
 
 class ItalianPokerState(Strict):
@@ -43,15 +43,27 @@ class ItalianPokerState(Strict):
         return self
 
 
+def actions_after_policy(state: ItalianPokerState, policy: RiskPolicy) -> list[str]:
+    """Legal actions after stop-loss.
+
+    Empty after the filter becomes ``["pass"]``. Never resurrect a filtered call
+    or raise as ``legal_actions[0]``.
+    """
+    actions = policy.filter_actions(
+        state.bankroll, list(state.legal_actions), costly=COSTLY_ACTIONS
+    )
+    if not actions:
+        return ["pass"]
+    return actions
+
+
 def build_italian_poker_request(
     state: ItalianPokerState, policy: RiskPolicy | None = None
 ) -> Request:
     policy = policy or RiskPolicy()
-    actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
-    # Empty: every legal move was a call or a raise. Do not resurrect legal_actions[0].
-    fail_closed = not actions
-    if fail_closed:
-        actions = ["pass"]
+    actions = actions_after_policy(state, policy)
+    # House ``pass`` stays a normal option. Policy-injected pass is fail-closed.
+    fail_closed = actions == ["pass"] and "pass" not in state.legal_actions
     evidence = {
         "game": "italian_poker",
         "street": state.street,

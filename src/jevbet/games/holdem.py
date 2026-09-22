@@ -13,7 +13,7 @@ from ..policy import RiskPolicy
 Street = Literal["preflop", "flop", "turn", "river"]
 HoldemAction = Literal["fold", "check", "call", "raise", "all_in"]
 
-_COSTLY = frozenset({"call", "raise", "all_in"})
+COSTLY_ACTIONS = frozenset({"call", "raise", "all_in"})
 
 
 class HoldemState(Strict):
@@ -44,16 +44,48 @@ class HoldemState(Strict):
         return self
 
 
-def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -> Request:
-    policy = policy or RiskPolicy()
-    actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
+def actions_after_policy(state: HoldemState, policy: RiskPolicy) -> list[str]:
+    """Legal actions after stop-loss / all-in filter.
+
+    When the filtered set is empty, return ``["pass"]``. Never resurrect
+    ``legal_actions[0]`` (often call or raise).
+    """
+    actions = policy.filter_actions(
+        state.bankroll, list(state.legal_actions), costly=COSTLY_ACTIONS
+    )
     if policy.forbid_all_in:
         actions = [a for a in actions if a != "all_in"]
-    # Empty: fold/check were absent and every remaining move was filtered.
-    # Do not resurrect legal_actions[0] (often call, raise, or all_in).
-    fail_closed = not actions
-    if fail_closed:
-        actions = ["pass"]
+    if not actions:
+        return ["pass"]
+    return actions
+
+
+def filtered_raise_sizes(state: HoldemState, policy: RiskPolicy, actions: list[str]) -> list[float]:
+    """Raise sizes that survive ``RiskPolicy``. Empty means do not raise."""
+    if "raise" not in actions:
+        return []
+    suggestions = list(state.raise_suggestions) or [
+        state.min_raise,
+        max(state.min_raise, state.pot * 0.5),
+        max(state.min_raise, state.pot),
+        max(state.min_raise, state.pot * 2),
+    ]
+    if state.max_raise is not None:
+        suggestions = [s for s in suggestions if s <= state.max_raise + 1e-9]
+    sizes = policy.filter_bet_sizes(state.bankroll, suggestions)
+    sizes = [s for s in sizes if s <= state.stack + 1e-9]
+    ceiling = min(policy.max_allowed_bet(state.bankroll), state.stack)
+    if not sizes and state.min_raise > 0 and state.min_raise <= ceiling + 1e-9:
+        sizes = [float(state.min_raise)]
+    if len(sizes) == 1 and ceiling > sizes[0] + 1e-9:
+        sizes.append(float(ceiling))
+    return sizes
+
+
+def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -> Request:
+    policy = policy or RiskPolicy()
+    actions = actions_after_policy(state, policy)
+    fail_closed = actions == ["pass"] and "pass" not in state.legal_actions
 
     evidence = {
         "game": "texas_holdem",
@@ -104,21 +136,7 @@ def build_holdem_request(state: HoldemState, policy: RiskPolicy | None = None) -
         }
 
     if not fail_closed and "raise" in actions:
-        suggestions = list(state.raise_suggestions) or [
-            state.min_raise,
-            max(state.min_raise, state.pot * 0.5),
-            max(state.min_raise, state.pot),
-            max(state.min_raise, state.pot * 2),
-        ]
-        if state.max_raise is not None:
-            suggestions = [s for s in suggestions if s <= state.max_raise + 1e-9]
-        sizes = policy.filter_bet_sizes(state.bankroll, suggestions)
-        sizes = [s for s in sizes if s <= state.stack + 1e-9]
-        ceiling = min(policy.max_allowed_bet(state.bankroll), state.stack)
-        if not sizes and state.min_raise > 0 and state.min_raise <= ceiling + 1e-9:
-            sizes = [float(state.min_raise)]
-        if len(sizes) == 1 and ceiling > sizes[0] + 1e-9:
-            sizes.append(float(ceiling))
+        sizes = filtered_raise_sizes(state, policy, actions)
         if len(sizes) >= 2:
             if len(sizes) == 2:
                 anchors = [

@@ -10,8 +10,9 @@ from pathlib import Path
 from rizzo_flow.schema import Request
 
 from .choices import HOLD_POLICY, fail_close_answers, legal_ids
-from .games.registry import build_request, list_games
+from .games.registry import build_request, list_games, load_game_state
 from .policy import RiskPolicy
+from .strategy import compose_response, recommend, should_use_model
 
 
 def write_json(value, destination: str | None):
@@ -123,43 +124,87 @@ def _post_decision(url: str, request: Request, timeout: float) -> dict:
         raise RuntimeError(f"Failed to reach Rizzo at {url}: {exc}") from exc
 
 
+def _advisor_from_args(args) -> str:
+    strategy_only = bool(getattr(args, "strategy_only", False))
+    llm = bool(getattr(args, "llm", False))
+    override = bool(getattr(args, "model_override", False))
+    if strategy_only and (llm or override):
+        raise ValueError("pass only one of --strategy-only and --llm/--model-override")
+    if strategy_only:
+        return "strategy_only"
+    if llm or override:
+        return "llm"
+    return "strategy"
+
+
+def _print_strategy(advice, source: str, response: dict | None = None) -> None:
+    print(f"strategy: {advice.action} — {advice.reason}", file=sys.stderr)
+    if response is not None and source == "model":
+        applied = response.get("strategy", {}).get("model_choice")
+        print(f"decision: {applied} (model; strategy did not decide)", file=sys.stderr)
+
+
+def _model_response(args, request: Request):
+    """Optional Rizzo/stub report. Local weights load only for ``--llm``."""
+    if args.url:
+        return _post_decision(args.url, request, args.timeout)
+    if args.fake:
+        return _stub_response(request)
+    if getattr(args, "llm", False) or getattr(args, "model_override", False):
+        from rizzo_flow.engine import Engine
+        from rizzo_flow.loader import load_backend
+
+        backend = load_backend(
+            args.backend,
+            size=args.size,
+            model=args.model,
+            quant=args.quant,
+            bits=args.bits,
+            device=args.device,
+            ctx=args.ctx,
+            batch_size=args.batch_size,
+            threads=args.threads,
+        )
+        return Engine(backend, ctx=args.ctx).decide(request)
+    return None
+
+
 def cmd_decide(args) -> int:
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
     policy = _policy_from_args(args)
+    try:
+        advisor = _advisor_from_args(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    state = load_game_state(payload, game=args.game)
     request = Request.model_validate(
         build_request(payload, game=args.game, policy=policy).model_dump()
     )
-    body = request.model_dump()
+    advice = recommend(state, policy)
     if args.schema_only:
-        write_json(body, args.output)
+        _print_strategy(advice, "schema-only")
+        write_json(request.model_dump(), args.output)
         return 0
-    if args.url:
-        try:
-            response = _post_decision(args.url, request, args.timeout)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        _publish(request, response, args.output)
-        return 0
-    if args.fake:
-        _publish(request, _stub_response(request), args.output)
-        return 0
-
-    from rizzo_flow.engine import Engine
-    from rizzo_flow.loader import load_backend
-
-    backend = load_backend(
-        args.backend,
-        size=args.size,
-        model=args.model,
-        quant=args.quant,
-        bits=args.bits,
-        device=args.device,
-        ctx=args.ctx,
-        batch_size=args.batch_size,
-        threads=args.threads,
+    try:
+        model_response = None if advisor == "strategy_only" else _model_response(args, request)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    rules = dict(state.rules)
+    use_model = should_use_model(
+        advice,
+        advisor,
+        model_available=model_response is not None,
+        rules=rules,
     )
-    _publish(request, Engine(backend, ctx=args.ctx).decide(request), args.output)
+    if advisor == "llm" and model_response is None:
+        print("model decision requested but no model is available", file=sys.stderr)
+        return 2
+    source = "model" if use_model else "strategy"
+    response = compose_response(request, advice, model_response, source=source)
+    _print_strategy(advice, source, response)
+    _publish(request, response, args.output)
     return 0
 
 
@@ -217,9 +262,14 @@ def cmd_play(args) -> int:
     if args.rounds < 1 or args.rounds > 100:
         print("rounds must be between 1 and 100", file=sys.stderr)
         return 2
-    if not args.schema_only and not args.fake and not args.url:
+    try:
+        advisor = _advisor_from_args(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if advisor == "llm" and not args.schema_only and not args.fake and not args.url:
         print(
-            "pass --fake, --url, or --schema-only "
+            "pass --fake or --url with --llm "
             "(jevbet play does not download or load the 4B weights)",
             file=sys.stderr,
         )
@@ -253,13 +303,15 @@ def cmd_play(args) -> int:
                 return _stub_response(request)
             return _post_decision(args.url, request, args.timeout)
 
+        decide_cb = None if advisor == "strategy_only" or not (args.fake or args.url) else decide
         outcome = run_play_loop(
             driver,
             game=args.game,
             rounds=args.rounds,
             policy=policy,
-            decide=decide,
+            decide=decide_cb,
             schema_only=False,
+            advisor=advisor,
         )
     except (RuntimeError, ImportError, ValueError, TypeError) as exc:
         print(str(exc), file=sys.stderr)
@@ -270,8 +322,9 @@ def cmd_play(args) -> int:
     outcome["driver"] = "playwright" if args.browser else "in-process"
     for row in outcome["hands"]:
         print(
-            f"round {row['round']}: choice={row['choice']} applied={row['applied']} "
-            f"amount={row['amount']} cash={row['bankroll_cash']} "
+            f"round {row['round']}: choice={row['choice']} via {row['decision_source']} "
+            f"strategy={row['strategy_action']} — {row['strategy_reason']} "
+            f"applied={row['applied']} amount={row['amount']} cash={row['bankroll_cash']} "
             f"profit={row['session_profit']} spot={row['spot']}",
             file=sys.stderr,
         )
@@ -330,6 +383,21 @@ def main(argv: list[str] | None = None) -> int:
     decide.add_argument("--threads", type=int)
     decide.add_argument("--batch-size", type=int, default=4)
     decide.add_argument("--ctx", type=int, default=8192)
+    decide.add_argument(
+        "--strategy-only",
+        action="store_true",
+        help="Use the strategy engine and do not call a model",
+    )
+    decide.add_argument(
+        "--llm",
+        action="store_true",
+        help="Let the model choose the action (still filtered by risk policy)",
+    )
+    decide.add_argument(
+        "--model-override",
+        action="store_true",
+        help="Same as --llm: a model response replaces a confident strategy action",
+    )
 
     demo = commands.add_parser("demo", parents=[shared], help="One step on a local mock HTML table")
     demo.add_argument("--game", default="blackjack", choices=("blackjack", "holdem"))
@@ -369,6 +437,21 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help="Stop the session when profit falls to -stop-loss (stored on the bankroll)",
+    )
+    play.add_argument(
+        "--strategy-only",
+        action="store_true",
+        help="Use the strategy engine and do not call a model",
+    )
+    play.add_argument(
+        "--llm",
+        action="store_true",
+        help="Let --fake or --url choose the action (still filtered by risk policy)",
+    )
+    play.add_argument(
+        "--model-override",
+        action="store_true",
+        help="Same as --llm for the play loop",
     )
 
     args = parser.parse_args(argv)

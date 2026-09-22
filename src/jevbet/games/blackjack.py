@@ -12,7 +12,8 @@ from ..policy import RiskPolicy
 
 BlackjackAction = Literal["hit", "stand", "double", "split", "surrender", "insurance"]
 
-_COSTLY = frozenset({"hit", "double", "split", "insurance"})
+# Surrender spends half the bet; stop-loss must not leave it as the only letter.
+COSTLY_ACTIONS = frozenset({"hit", "double", "split", "insurance", "surrender"})
 
 _ACTION_TEXT = {
     "hit": "Take one more card.",
@@ -52,13 +53,26 @@ class BlackjackState(Strict):
         return self
 
 
+def actions_after_policy(state: BlackjackState, policy: RiskPolicy) -> list[str]:
+    """Legal actions after stop-loss.
+
+    When every table action was costly, return ``["pass"]``. Never put an
+    unfiltered ``legal_actions[0]`` (hit, double, …) back in front of strategy
+    or the model.
+    """
+    actions = policy.filter_actions(
+        state.bankroll, list(state.legal_actions), costly=COSTLY_ACTIONS
+    )
+    if not actions:
+        return ["pass"]
+    return actions
+
+
 def build_blackjack_request(state: BlackjackState, policy: RiskPolicy | None = None) -> Request:
     policy = policy or RiskPolicy()
-    actions = policy.filter_actions(state.bankroll, list(state.legal_actions), costly=_COSTLY)
-    # Empty: every legal move was costly. Do not resurrect legal_actions[0].
-    fail_closed = not actions
-    if fail_closed:
-        actions = ["pass"]
+    actions = actions_after_policy(state, policy)
+    # Pass here means the table set was emptied by policy, not a casino button.
+    fail_closed = actions == ["pass"] and "pass" not in state.legal_actions
     hand = state.hands[state.active_hand]
     evidence = {
         "game": "blackjack",

@@ -26,6 +26,7 @@ def test_blackjack_fake_loop_stands_three_rounds():
             rounds=3,
             policy=RiskPolicy(),
             decide=_stub_response,
+            advisor="llm",
         )
     finally:
         adapter.close()
@@ -43,6 +44,7 @@ def test_holdem_fake_loop_calls():
         rounds=2,
         policy=RiskPolicy(),
         decide=_stub_response,
+        advisor="llm",
     )
     assert [row["choice"] for row in outcome["hands"]] == ["call", "call"]
     assert all(row["applied"] and row["amount"] is None for row in outcome["hands"])
@@ -193,7 +195,13 @@ def test_cli_play_fake_and_schema_only(tmp_path):
     assert code == 0
     request = json.loads(schema.read_text(encoding="utf-8"))
     Request.model_validate(request)
-    assert main(["play", "--adapter", "mock-casino", "--game", "blackjack", "--rounds", "1"]) == 2
+    # Default play is strategy-first and does not load weights. --llm still refuses
+    # to download the 4B checkpoint; point it at --fake or --url.
+    assert main(["play", "--adapter", "mock-casino", "--game", "blackjack", "--rounds", "1"]) == 0
+    assert (
+        main(["play", "--adapter", "mock-casino", "--game", "blackjack", "--rounds", "1", "--llm"])
+        == 2
+    )
 
 
 @pytest.mark.parametrize(
