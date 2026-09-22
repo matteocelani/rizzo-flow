@@ -1,7 +1,11 @@
-"""Shared poker helpers: pot odds, 5-card rank, preflop class, draw flags.
+"""Shared poker helpers: pot odds, 5-card rank, preflop group, draw flags.
 
-This is a heuristic, not a GTO solver. Hand ranks are deterministic categories
-used to pick fold/call/raise. They are not equities from a neural net.
+Preflop is a complete matrix of the 169 starting hands (13 pairs, 78 suited,
+78 offsuit) in the Sklansky–Malmuth groups from *Hold'em Poker for Advanced
+Players* (groups 1–8 listed, group 9 = every other hand). That is a published
+ordering, not a GTO solution. Postflop flags are hand classes (high pair, top
+pair, overpair, overcards, OESD, gutshot, flush draw, two pair or better, set,
+nuts). They are not equities from a solver.
 """
 
 from __future__ import annotations
@@ -125,34 +129,156 @@ def italian_deck() -> list[tuple[int, str]]:
     return [(ITALIAN_VALUE[rank], suit) for rank in ITALIAN_RANKS for suit in ITALIAN_SUITS]
 
 
-def preflop_class(values: tuple[int, int], suited: bool) -> str:
-    """``premium`` / ``strong`` / ``speculative`` / ``trash`` from two hole ranks."""
+# Sklansky–Malmuth groups. Keys are ``AA``, ``AKs``, ``AKo``. Group 9 is every
+# starting hand that is not listed. Source: David Sklansky and Mason Malmuth,
+# Hold'em Poker for Advanced Players (Two Plus Two), as reproduced by the
+# standard nine-group table (thepokerbank / the book). Not a GTO ranking.
+SKLANSKY_GROUPS: dict[int, frozenset[str]] = {
+    1: frozenset({"AA", "AKs", "KK", "QQ", "JJ"}),
+    2: frozenset({"AKo", "AQs", "AJs", "KQs", "TT"}),
+    3: frozenset({"AQo", "ATs", "KJs", "QJs", "JTs", "99"}),
+    4: frozenset({"AJo", "KQo", "KTs", "QTs", "J9s", "T9s", "98s", "88"}),
+    5: frozenset(
+        {
+            "A9s",
+            "A8s",
+            "A7s",
+            "A6s",
+            "A5s",
+            "A4s",
+            "A3s",
+            "A2s",
+            "KJo",
+            "QJo",
+            "JTo",
+            "Q9s",
+            "T8s",
+            "97s",
+            "87s",
+            "77",
+            "76s",
+            "66",
+        }
+    ),
+    6: frozenset({"ATo", "KTo", "QTo", "J8s", "86s", "75s", "65s", "55", "54s"}),
+    7: frozenset(
+        {
+            "K9s",
+            "K8s",
+            "K7s",
+            "K6s",
+            "K5s",
+            "K4s",
+            "K3s",
+            "K2s",
+            "J9o",
+            "T9o",
+            "98o",
+            "64s",
+            "53s",
+            "44",
+            "43s",
+            "33",
+            "22",
+        }
+    ),
+    8: frozenset(
+        {
+            "A9o",
+            "K9o",
+            "Q9o",
+            "J8o",
+            "J7s",
+            "T8o",
+            "96s",
+            "87o",
+            "85s",
+            "76o",
+            "74s",
+            "65o",
+            "54o",
+            "42s",
+            "32s",
+        }
+    ),
+}
+_RANK_CHAR = {
+    14: "A",
+    13: "K",
+    12: "Q",
+    11: "J",
+    10: "T",
+    9: "9",
+    8: "8",
+    7: "7",
+    6: "6",
+    5: "5",
+    4: "4",
+    3: "3",
+    2: "2",
+}
+_HAND_GROUP = {hand: group for group, hands in SKLANSKY_GROUPS.items() for hand in hands}
+
+
+def starting_hand_key(high: int, low: int, suited: bool) -> str:
+    """``AKs`` / ``AKo`` / ``AA`` from two rank values. Higher rank is written first."""
+    left = _RANK_CHAR[high]
+    right = _RANK_CHAR[low]
+    if high == low:
+        return left + right
+    return left + right + ("s" if suited else "o")
+
+
+def all_starting_hands() -> tuple[str, ...]:
+    """The 169 French-deck starting hands, pairs then suited/offsuit under each rank."""
+    ranks = "AKQJT98765432"
+    hands: list[str] = []
+    for index, high in enumerate(ranks):
+        hands.append(high + high)
+        for low in ranks[index + 1 :]:
+            hands.append(f"{high}{low}s")
+            hands.append(f"{high}{low}o")
+    return tuple(hands)
+
+
+def preflop_group(values: tuple[int, int], suited: bool) -> int:
+    """Sklansky–Malmuth group 1 (strongest) through 9 (unlisted / trash).
+
+    Ranks outside the French 2–A scale (an Italian face that is not mapped)
+    are group 9. Italian poker reuses this matrix on numeric ranks
+    (Asso = A, Re = T, Cavallo = 9, Fante = 8); that mapping is approximate.
+    """
     high, low = sorted(values, reverse=True)
-    pair = high == low
-    gap = high - low
-    if pair and high >= 12:
-        return "premium"
-    if high == 14 and low == 13 and suited:
-        return "premium"
-    if pair and high >= 10:
-        return "strong"
-    if high == 14 and low == 13:
-        return "strong"
-    if high == 14 and low == 12:
-        return "strong"
-    if high == 13 and low == 12 and suited:
-        return "strong"
-    if pair:
-        return "speculative"
-    if suited and high == 14:
-        return "speculative"
-    if suited and gap == 1 and low >= 5:
-        return "speculative"
-    if suited and gap == 2 and low >= 6:
-        return "speculative"
-    if gap == 1 and low >= 10:
-        return "speculative"
-    return "trash"
+    if high not in _RANK_CHAR or low not in _RANK_CHAR:
+        return 9
+    return _HAND_GROUP.get(starting_hand_key(high, low, suited), 9)
+
+
+def preflop_class(values: tuple[int, int], suited: bool) -> str:
+    """``group N`` or ``trash`` (group 9) from two hole ranks."""
+    group = preflop_group(values, suited)
+    if group == 9:
+        return "trash"
+    return f"group {group}"
+
+
+def validate_preflop_groups() -> None:
+    """Groups 1–8 are disjoint, use real hand keys, and cover 83 published hands."""
+    seen: dict[str, int] = {}
+    legal = set(all_starting_hands())
+    for group, hands in SKLANSKY_GROUPS.items():
+        if group not in range(1, 9):
+            raise RuntimeError(f"unexpected group {group}")
+        for hand in hands:
+            if hand not in legal:
+                raise RuntimeError(f"{hand} is not one of the 169 starting hands")
+            if hand in seen:
+                raise RuntimeError(f"{hand} is in group {seen[hand]} and group {group}")
+            seen[hand] = group
+    if len(seen) != 83:
+        raise RuntimeError(f"expected 83 listed hands, found {len(seen)}")
+    if len(legal) != 169:
+        raise RuntimeError(f"expected 169 starting hands, found {len(legal)}")
 
 
 def _straight_draw(hole_vals: set[int], all_vals: set[int]) -> str | None:
@@ -185,7 +311,15 @@ def postflop_flags(
     board: list[tuple[int, str]],
     deck: list[tuple[int, str]],
 ) -> dict:
-    """Pair / overcards / draw / nuts flags. ``kind`` is the 5-card category or 0."""
+    """Made-hand and draw classes. ``kind`` is the 5-card category, or 0.
+
+    ``high_pair`` is an overpair or top pair (exactly one pair). ``set`` is a
+    pocket pair with at least one board match and three of a kind or better.
+    ``two_pair_plus`` is any hero-made hand of category 2 or higher (two pair,
+    trips, straight, flush, full house, quads, straight flush). ``oesd`` and
+    ``gutshot`` are the straight-draw classes; a wheel missing one end counts
+    as a gutshot. This is a classifier, not an equity solver.
+    """
     hole_vals = [card[0] for card in hole]
     board_vals = [card[0] for card in board]
     pocket = len(hole_vals) == 2 and hole_vals[0] == hole_vals[1]
@@ -196,7 +330,8 @@ def postflop_flags(
     kind = hero[0] if hero else 0
     board_kind = board_rank[0] if board_rank else 0
     hero_made = kind > board_kind or (pair and kind >= 1 and kind >= board_kind)
-    overcards = bool(board_vals) and all(value > max(board_vals) for value in hole_vals)
+    board_max = max(board_vals) if board_vals else 0
+    overcards = bool(board_vals) and all(value > board_max for value in hole_vals)
     suits = Counter(card[1] for card in hole + board)
     flush_draw = False
     if len(board) < 5:
@@ -208,13 +343,32 @@ def postflop_flags(
         straight = _straight_draw(set(hole_vals), set(hole_vals) | set(board_vals))
         if hero and hero[0] >= 4:
             straight = None
+    pair_rank = hero[1] if hero and kind == 1 else None
+    # Overpair: pocket pair above every board card, still exactly one pair.
+    overpair = bool(pocket and board_vals and hole_vals[0] > board_max and hero_made and kind == 1)
+    # Top pair: hero paired the highest board rank, and that is the whole hand.
+    top_pair = bool(
+        kind == 1 and hero_made and board_vals and pair_rank == board_max and board_max in hole_vals
+    )
+    # Set: pocket pair with at least one board match, three of a kind or better.
+    set_ = bool(
+        pocket and board_vals and board_vals.count(hole_vals[0]) >= 1 and hero_made and kind >= 3
+    )
+    two_pair_plus = bool(hero_made and kind >= 2)
     return {
         "kind": kind,
         "pair": pair and hero_made,
+        "high_pair": overpair or top_pair,
+        "top_pair": top_pair,
+        "overpair": overpair,
+        "set": set_,
+        "two_pair_plus": two_pair_plus,
         "hero_made": hero_made,
         "overcards": overcards and not pair,
         "flush_draw": flush_draw,
         "straight_draw": straight,
+        "oesd": straight == "oesd",
+        "gutshot": straight == "gutshot",
         "nuts": is_nuts(hole, board, deck),
     }
 
@@ -237,3 +391,6 @@ def draw_equity(flags: dict, board_len: int) -> float:
     elif flags["straight_draw"] == "gutshot":
         equity = max(equity, 0.45 if flags["flush_draw"] and cards_left == 2 else gut)
     return equity
+
+
+validate_preflop_groups()

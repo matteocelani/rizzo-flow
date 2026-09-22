@@ -1,8 +1,10 @@
 """Poker italiano heuristic: the Hold'em rules, on 40-card ranks.
 
 Asso is high (value 14, above Re). Straights use those numeric ranks, so asso
-does not connect to Re (the 11–13 slots of a French deck are absent). The same
-pot-odds and made-hand flags apply. This is not a solved Italian-deck game.
+does not connect to Re (the 11–13 slots of a French deck are absent). Preflop
+reuses the 169-hand Sklansky–Malmuth matrix on those numbers (Asso = A, Re = T,
+Cavallo = 9, Fante = 8). That mapping is approximate. The same pot-odds and
+made-hand flags apply. This is not a solved Italian-deck game and it is not GTO.
 """
 
 from __future__ import annotations
