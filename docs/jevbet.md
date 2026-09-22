@@ -135,10 +135,10 @@ Honest split. Nothing here is a claim of profit, and none of it is Spark.
 
 | Game | What you get | What you do not get |
 | --- | --- | --- |
-| Blackjack | Multi-deck **basic strategy**. Default chart is 4–8 decks, dealer hits soft 17, double after split, late surrender when that button is legal (Blackjack Apprenticeship H17 chart, 2024). Soft 18 vs 9 is a **hit** on that chart. | Card counting, composition-dependent indices, single-deck or double-deck cell changes (the multi-deck chart is still used, and the reason says so), European no-hole-card, early surrender. A 6:5 blackjack payout does **not** change the cells and it does eat the edge the chart was built to protect. Insurance is never taken. |
-| Blackjack rules | `dealer_hits_soft_17` / `dealer_stands_soft_17`, `das`, `surrender`, `decks`, `blackjack_payout`. S17 flips six cells: 11 vs A hits; soft 18 vs 2 stands; soft 19 vs 6 stands; 15 vs A and 17 vs A do not surrender; 8s vs A split instead of surrender. No DAS: 2s and 3s vs 2–3 hit, 4s vs 5–6 hit, 6s vs 2 hit. Stop-loss treats hit, double, split, insurance, and surrender as costly. When that empties the free set, builders and strategy offer `pass` + `hold_policy` — never `legal_actions[0]`. | If the chart says surrender or double or split and that action is not legal after policy, the next chart action is used (surrender → hit, double → hit or stand, split → the hard/soft total). |
-| Hold'em | Pot odds `to_call / (pot + to_call)`. Preflop bucket: premium / strong / speculative / trash. Postflop flags from the cards only: pair, overcards, flush or straight draw, and whether the holding is the nuts on this board. Raise size is one of the sizes `RiskPolicy` already kept. | Not GTO. No ranges, no opponent model, no equity solver. Draw “equity” is a fixed approximation (about 35% for a flopped flush draw, and so on), not a simulation. Clear spots are confident (trash facing a bet folds; the nuts does not fold). Marginal pairs are not. |
-| Poker italiano | The same heuristic on 40-card ranks. Asso is high. Straights use those numbers, so asso does not connect to Re. | Not a solved Italian-deck game. |
+| Blackjack | Multi-deck **basic strategy**, total-dependent. Full tables `HARD_H17`, `SOFT_H17`, `PAIRS_H17_DAS`, plus complete `HARD_S17`, `SOFT_S17`, `PAIRS_S17_DAS`, `PAIRS_H17_NDAS`, `PAIRS_S17_NDAS` (Blackjack Apprenticeship H17 chart, 2024). One resolver, `lookup(facts, up, rules)`. Soft 18 vs 9 is a **hit**. `double`, `split`, `surrender`, and `insurance` are recommended only from a two-card hand; split only when the pair cell says so. | Card counting, composition-dependent indices, single-deck or double-deck cell changes (the multi-deck chart is still used, and the reason says so), European no-hole-card, early surrender. A 6:5 blackjack payout does **not** change the cells and it does eat the edge the chart was built to protect. Insurance is never taken. |
+| Blackjack rules | `dealer_hits_soft_17` / `dealer_stands_soft_17`, `das`, `surrender`, `decks`, `blackjack_payout`. S17 differs in six cells, stored as full strings: 11 vs A hits; soft 18 vs 2 stands; soft 19 vs 6 stands; 15 vs A and 17 vs A do not surrender; 8s vs A split instead of surrender. No DAS pair strings: 2s and 3s vs 2–3 hit, 4s vs 5–6 hit, 6s vs 2 hit. Stop-loss treats hit, double, split, insurance, and surrender as costly. When that empties the free set, builders and strategy offer `pass` + `hold_policy` — never `legal_actions[0]`. | If the chart says surrender or double or split and that action is not legal after policy **or** the hand has more than two cards, the next chart action is used (surrender → hit, double → hit or stand, split → the hard/soft total). A 3-card soft 18 vs 6 stands. |
+| Hold'em | Pot odds `to_call / (pot + to_call)`. **Complete preflop matrix**: all 169 starting hands in Sklansky–Malmuth groups 1–9, with a documented action for an open and for a raise price. Postflop classes from the cards: high pair, top pair, overpair, overcards, OESD, gutshot, flush draw, two pair or better, set, nuts. Raise size is one of the sizes `RiskPolicy` already kept. | Not GTO. No opponent model, no equity solver. Draw “equity” is a fixed approximation (about 35% for a flopped flush draw, and so on), not a simulation. Group 9 (“trash”) facing a bet folds; the nuts does not fold. Marginal pairs are not solved. |
+| Poker italiano | The same preflop matrix and postflop classes on 40-card ranks (Asso = A, Re = T, Cavallo = 9, Fante = 8). Asso is high. Straights use those numbers, so asso does not connect to Re. | Not a solved Italian-deck game. The French 169-hand groups are only an approximation on this deck. |
 | Scopa | Among `legal_plays`: a scopa, else more cards captured, else more sevens (sette bello breaks the next tie), else more denari, else trail the lowest pip (Fante 8, Cavallo 9, Re 10). | Not a search of the remaining deck. No opponent model. |
 | Tre sette | `legal_cards` already encode must-follow. Win the trick with the cheapest card that beats the current winner (a small lead-suit card before a trump). If nothing wins, dump the lowest card and keep trump. Lead the lowest card. Order: Asso, 3, Re, Cavallo, Fante, then 7…2. | Not partnership signalling. Not a point-count endgame. |
 | Roulette | **Impossible to beat** with a selection rule. European house edge is 1/37 ≈ 2.70%. American (0 and 00) is 2/38 ≈ 5.26%. Even-money bets have that same edge; they are only less volatile. `last_results` are ignored. Default action is `pass`. If pass is not legal, the minimum even-money bet (red, black, even, odd, low, high — fixed order, not “whatever just hit”). | No positive-EV bet exists. Chasing a colour because it just repeated is not a strategy this code will emit. |
@@ -147,6 +147,25 @@ Honest split. Nothing here is a claim of profit, and none of it is Spark.
 `is_soft` flag that disagrees is reported in the reason and ignored. The action
 is always one of the post-policy legal ids, never `hold_policy`. Stop-loss still
 removes hit, double, split, call, and raise before this choice is made.
+
+## Coverage
+
+What is exhaustive, what is a class heuristic, and what cannot be beaten.
+`tests/test_jevbet_chart_matrix.py` fails if any blackjack cell drifts.
+
+| Surface | 100% of the defined cases | Deliberately not solved |
+| --- | --- | --- |
+| Blackjack charts | Hard totals **5–21** (17 × 10 = **170**), soft totals **13–21** (9 × 10 = **90**), pairs **A, 2–10** (10 × 10 = **100**). **360** cells on each of four tables (H17+DAS, S17+DAS, H17 no-DAS, S17 no-DAS) = **1440** cells. Every chart string has length 10; missing keys fail at import. Surrender off rewrites R/W/Z to the fallback on those same cells. | Composition-dependent plays, 1- and 2-deck deviations, early surrender, card counting. Infinite-deck or single-shoe exact GTO is not this chart. |
+| Blackjack shape | `double`, `split`, `surrender`, `insurance` only when `n_cards == 2`. Split only from a pair cell that says split. Natural 21, hard 20, and hard 21 stand whenever stand is legal. 3-card soft 18 vs 6 stands (chart `U`, double removed). | A caller can still list an illegal button; the strategy will not take it. |
+| Hold'em preflop | All **169** hands (13 pairs + 78 suited + 78 offsuit) map to one Sklansky–Malmuth group and then to one action from group × pot odds × seat. | Not GTO. The price cutoffs are documented thresholds for that grouping, not a solved no-limit range. |
+| Hold'em postflop | One flag path each for high pair, top pair, overpair, overcards, OESD, gutshot, flush draw, two pair or better, set, and the nuts. | Not an equity solver. Draw percentages are fixed approximations. |
+| Scopa | Every `legal_plays` entry is scored. Order: scopa, then more cards, then more sevens, then sette bello, then more denari; otherwise the lowest trail. | Not a search of the remaining deck. |
+| Tre sette | Lead, must-follow cheapest winner, trump before a losing card, dump when nothing wins. Rank order Asso, 3, Re, Cavallo, Fante, 7…2, checked across that order. | Not partnership signalling. Not a point-count endgame. |
+| Roulette | All **14** bet types sit in one fixed order, `pass` first. Shuffled `last_results` do not change the action, the reason, or the stake. | Positive EV is impossible. European edge 1/37 ≈ 2.70%. American edge 2/38 ≈ 5.26%. The least-bad forced bet is still negative EV. |
+
+**IT.** Copertura completa sulle celle definibili: basic strategy multi-mazzo (170 hard + 90 soft + 100 coppie, per H17/S17 e DAS/no-DAS; 1440 celle) e tutte le 169 mani preflop. Il postflop, la scopa e il tre sette restano euristiche a classi. La roulette non ha una scelta a valore atteso positivo: l'azione è `pass`.
+
+**EN.** Full coverage of the defined cells: multi-deck basic strategy (170 hard + 90 soft + 100 pairs, for H17/S17 and DAS/no-DAS; 1440 cells) and all 169 preflop hands. Postflop, scopa, and tre sette stay class heuristics. Roulette has no positive-EV choice: the action is `pass`.
 
 ## Mock first
 
@@ -211,11 +230,12 @@ uv run pytest -q -m browser
 ## IT / EN
 
 **IT.** Jevbet decide prima con una strategia deterministica (blackjack: basic strategy
-multi-mazzo; gli altri giochi: euristiche dichiarate, non GTO). Spark è un consulente
-opzionale (`--llm`), non sovrascrive una mossa sicura della strategia. La roulette ha
-valore atteso negativo: l'azione predefinita è `pass`. Niente fine-tune dei pesi.
+multi-mazzo, tutte le celle; Hold'em: matrice completa delle 169 mani preflop, non GTO).
+Spark è un consulente opzionale (`--llm`), non sovrascrive una mossa sicura della strategia.
+La roulette ha valore atteso negativo: l'azione predefinita è `pass`. Niente fine-tune dei pesi.
 
 **EN.** Jevbet decides with a deterministic strategy first (blackjack: multi-deck basic
-strategy; other games: stated heuristics, not GTO). Spark is an optional advisor
-(`--llm`) and does not override a confident strategy action. Roulette has negative
-expected value: the default action is `pass`. No weight fine-tune.
+strategy, every chart cell; Hold'em: complete 169-hand preflop matrix plus postflop
+classes, not GTO). Spark is an optional advisor (`--llm`) and does not override a
+confident strategy action. Roulette has negative expected value: the default action is
+`pass`. No weight fine-tune.

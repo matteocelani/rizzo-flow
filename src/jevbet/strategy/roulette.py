@@ -17,8 +17,8 @@ from ..games.roulette import RouletteState, offers_after_policy
 from ..policy import RiskPolicy
 from .advice import StrategyAdvice
 
-# Fixed preference. Independent of recent numbers.
-_ORDER = (
+# Fixed preference. Independent of recent numbers. ``pass`` is always first.
+BET_PREFERENCE = (
     "pass",
     "red",
     "black",
@@ -47,7 +47,7 @@ def recommend_roulette(state: RouletteState, policy: RiskPolicy | None = None) -
     policy = policy or RiskPolicy(min_bet=state.min_bet)
     types, chips = offers_after_policy(state, policy)
     legal = set(types)
-    chosen = next((name for name in _ORDER if name in legal), types[0])
+    chosen = next((name for name in BET_PREFERENCE if name in legal), types[0])
     edge = _edge(state.wheel)
     size = float(chips[0]) if chips and chosen != "pass" else None
     if chosen == "pass":
@@ -66,7 +66,7 @@ def recommend_roulette(state: RouletteState, policy: RiskPolicy | None = None) -
         )
         confidence = 0.55
     alternatives = tuple(
-        (name, "also negative EV") for name in _ORDER if name in legal and name != chosen
+        (name, "also negative EV") for name in BET_PREFERENCE if name in legal and name != chosen
     )[:3]
     return StrategyAdvice(
         action=chosen,

@@ -1,9 +1,10 @@
 """Texas Hold'em heuristic. Not a GTO solution.
 
-Preflop classes (premium / strong / speculative / trash) come from the two hole
-cards. Postflop uses pot odds plus deterministic flags: pair, overcards, flush
-or straight draw, and whether the holding is the nuts on this board. Raise
-sizes are chosen only from ``filtered_raise_sizes`` (already inside RiskPolicy).
+Preflop is the complete Sklansky–Malmuth matrix (all 169 starting hands) plus
+documented pot-odds thresholds. Postflop uses pot odds plus deterministic
+classes: high pair, top pair, overpair, overcards, open-ended straight draw,
+gutshot, flush draw, two pair or better, set, and nuts. Raise sizes are chosen
+only from ``filtered_raise_sizes`` (already inside RiskPolicy).
 """
 
 from __future__ import annotations
@@ -18,8 +19,29 @@ from .poker import (
     french_deck,
     postflop_flags,
     pot_odds,
-    preflop_class,
+    preflop_group,
+    starting_hand_key,
 )
+
+# Documented continue/raise prices by Sklansky–Malmuth group. Not a GTO chart.
+# ``price`` is ``to_call / (pot + to_call)``. Group 9 never continues.
+MAX_CONTINUE_PRICE = {
+    1: 1.0,
+    2: 0.45,
+    3: 0.35,
+    4: 0.28,
+    5: 0.22,
+    6: 0.16,
+    7: 0.12,
+    8: 0.08,
+    9: 0.0,
+}
+# Facing a bet, these groups raise when the price is at or under the cutoff.
+RAISE_PRICE = {1: 0.40, 2: 0.25, 3: 0.15}
+# Unopened pot: groups 1–4 raise from any seat; 5–6 also raise from late seats.
+OPEN_GROUPS = frozenset({1, 2, 3, 4})
+LATE_OPEN_GROUPS = frozenset({5, 6})
+LATE_POSITIONS = frozenset({"BTN", "BU", "BUTTON", "CO", "CUTOFF", "HJ", "HIJACK"})
 
 
 def _cards(cards: list[Card]) -> list[tuple[int, str]]:
@@ -86,63 +108,78 @@ def recommend_holdem(state: HoldemState, policy: RiskPolicy | None = None) -> St
     return _postflop(state, hole, _cards(state.community), legal, sizes, price, french_deck())
 
 
+def _late(position: str) -> bool:
+    return position.strip().upper() in LATE_POSITIONS
+
+
 def _preflop(state, hole, legal, sizes, price) -> StrategyAdvice:
-    values = (hole[0][0], hole[1][0])
+    high, low = sorted((hole[0][0], hole[1][0]), reverse=True)
     suited = hole[0][1] == hole[1][1]
-    kind = preflop_class(values, suited)
-    label = f"{kind} {'suited' if suited else 'offsuit'} from {state.position}"
+    group = preflop_group((high, low), suited)
+    try:
+        name = starting_hand_key(high, low, suited)
+    except KeyError:
+        name = "unknown"
+    band = "trash" if group == 9 else f"group {group}"
+    label = f"{name} {band} from {state.position}"
     odds = f"pot odds {price:.2f}"
-    if kind == "premium":
-        if "raise" in legal and sizes:
+    ceiling = MAX_CONTINUE_PRICE[group]
+    if state.to_call <= 0:
+        open_raise = group in OPEN_GROUPS or (group in LATE_OPEN_GROUPS and _late(state.position))
+        if open_raise and "raise" in legal and sizes:
             return _finish(
                 "raise",
-                f"{label}; raise ({odds})",
-                0.90,
-                alternatives=(("call", "call if the raise size is declined"),)
-                if "call" in legal
+                f"{label}; open-raise ({odds})",
+                0.90 if group <= 2 else 0.82,
+                alternatives=(("check", "check if the raise is declined"),)
+                if "check" in legal
                 else (),
-                size=_pick_size(sizes, "medium"),
+                size=_pick_size(sizes, "medium" if group == 1 else "small"),
             )
-        if "call" in legal:
-            return _finish("call", f"{label}; raise size blocked by policy, call ({odds})", 0.88)
-        return _finish(_fallback(legal), f"{label}; no priced raise or call ({odds})", 0.85)
-    if kind == "strong":
-        if state.to_call <= 0 and "raise" in legal and sizes:
-            return _finish(
-                "raise",
-                f"{label}; raise when checked to ({odds})",
-                0.82,
-                size=_pick_size(sizes, "small"),
-            )
-        if state.to_call <= 0 and "check" in legal:
-            return _finish("check", f"{label}; check ({odds})", 0.80)
-        if "call" in legal and price <= 0.35:
-            return _finish("call", f"{label}; call a modest price ({odds})", 0.80)
-        if "fold" in legal and state.to_call > 0:
-            return _finish("fold", f"{label}; price is too wide ({odds})", 0.78)
-        return _finish(_fallback(legal), f"{label}; no better legal action ({odds})", 0.75)
-    if kind == "speculative":
-        if state.to_call <= 0 and "check" in legal:
-            return _finish("check", f"{label}; free card ({odds})", 0.80)
-        if "call" in legal and price <= 0.20:
-            return _finish("call", f"{label}; cheap speculative call ({odds})", 0.60)
-        if "fold" in legal and state.to_call > 0:
-            return _finish("fold", f"{label}; not priced to continue ({odds})", 0.72)
-        return _finish(_fallback(legal), f"{label}; taking the free action ({odds})", 0.70)
-    # trash
-    if state.to_call <= 0 and "check" in legal:
-        return _finish("check", f"{label}; nothing to call ({odds})", 0.88)
-    if "fold" in legal and state.to_call > 0:
-        return _finish("fold", f"{label}; fold trash facing a bet ({odds})", 0.93)
-    return _finish(_fallback(legal), f"{label}; fold not legal ({odds})", 0.80)
+        if "check" in legal:
+            return _finish("check", f"{label}; check the unopened pot ({odds})", 0.84)
+        return _finish(_fallback(legal), f"{label}; no free check ({odds})", 0.75)
+    if group <= 3 and price <= RAISE_PRICE[group] and "raise" in legal and sizes:
+        return _finish(
+            "raise",
+            f"{label}; raise a priced bet ({odds})",
+            0.90 if group == 1 else 0.84,
+            alternatives=(("call", "call if the raise size is declined"),)
+            if "call" in legal
+            else (),
+            size=_pick_size(sizes, "medium" if group == 1 else "small"),
+        )
+    if "call" in legal and price <= ceiling + 1e-12:
+        why = "call; price is inside the group threshold"
+        if group == 1 and "raise" not in legal:
+            why = "raise size blocked by policy, call"
+        return _finish("call", f"{label}; {why} ({odds})", 0.88 if group <= 2 else 0.78)
+    if "fold" in legal:
+        note = "fold trash" if group == 9 else "fold"
+        return _finish(
+            "fold",
+            f"{label}; {note}, price is too wide ({odds})",
+            0.93 if group == 9 else 0.80,
+        )
+    return _finish(_fallback(legal), f"{label}; fold not legal ({odds})", 0.75)
+
+
+def _value_label(flags: dict) -> str:
+    if flags["nuts"]:
+        return "nuts"
+    if flags["set"]:
+        return "set"
+    if flags["two_pair_plus"]:
+        return f"two pair or better (category {flags['kind']})"
+    return f"made hand category {flags['kind']}"
 
 
 def _postflop(state, hole, board, legal, sizes, price, deck) -> StrategyAdvice:
     flags = postflop_flags(hole, board, deck)
     odds = f"pot odds {price:.2f}"
-    value = flags["nuts"] or (flags["hero_made"] and flags["kind"] >= 2)
+    value = flags["nuts"] or flags["two_pair_plus"]
     if value:
-        why = "nuts" if flags["nuts"] else f"made hand category {flags['kind']}"
+        why = _value_label(flags)
         if "raise" in legal and sizes and (state.to_call <= state.pot or state.to_call <= 0):
             return _finish(
                 "raise",
@@ -157,25 +194,45 @@ def _postflop(state, hole, board, legal, sizes, price, deck) -> StrategyAdvice:
             return _finish("check", f"{why} on {state.street}; check ({odds})", 0.88)
         return _finish(_fallback(legal), f"{why}; value action filtered by policy ({odds})", 0.90)
 
-    equity = draw_equity(flags, len(board))
-    drawing = equity > 0 and flags["kind"] < 2
-    if drawing:
+    if flags["high_pair"]:
+        which = "overpair" if flags["overpair"] else "top pair"
+        if state.to_call <= 0 and "raise" in legal and sizes:
+            return _finish(
+                "raise",
+                f"high pair ({which}) on {state.street}; bet ({odds})",
+                0.78,
+                size=_pick_size(sizes, "small"),
+            )
         if state.to_call <= 0 and "check" in legal:
-            return _finish("check", f"draw equity {equity:.2f}; free card ({odds})", 0.82)
-        if "call" in legal and price <= equity + 1e-9:
-            return _finish("call", f"draw equity {equity:.2f} beats {odds}", 0.80)
+            return _finish("check", f"high pair ({which}); check ({odds})", 0.76)
+        if "call" in legal and price <= 0.40 + 1e-12:
+            return _finish("call", f"high pair ({which}); call up to 0.40 ({odds})", 0.76)
         if "fold" in legal and state.to_call > 0:
-            return _finish("fold", f"draw equity {equity:.2f} loses to {odds}", 0.80)
-        return _finish(_fallback(legal), f"draw with no priced continue ({odds})", 0.75)
+            return _finish("fold", f"high pair ({which}); price is too wide ({odds})", 0.74)
+        return _finish(
+            _fallback(legal), f"high pair ({which}); no better legal action ({odds})", 0.72
+        )
+
+    equity = draw_equity(flags, len(board))
+    drawing = equity > 0 and (flags["oesd"] or flags["gutshot"] or flags["flush_draw"])
+    if drawing:
+        draw = "flush draw" if flags["flush_draw"] else flags["straight_draw"]
+        if state.to_call <= 0 and "check" in legal:
+            return _finish("check", f"{draw} equity {equity:.2f}; free card ({odds})", 0.82)
+        if "call" in legal and price <= equity + 1e-9:
+            return _finish("call", f"{draw} equity {equity:.2f} beats {odds}", 0.80)
+        if "fold" in legal and state.to_call > 0:
+            return _finish("fold", f"{draw} equity {equity:.2f} loses to {odds}", 0.80)
+        return _finish(_fallback(legal), f"{draw} with no priced continue ({odds})", 0.75)
 
     if flags["pair"]:
         if state.to_call <= 0 and "check" in legal:
-            return _finish("check", f"one pair; check ({odds})", 0.70)
+            return _finish("check", f"weak pair; check ({odds})", 0.70)
         if "call" in legal and price <= 0.35:
-            return _finish("call", f"one pair; call a small price ({odds})", 0.70)
+            return _finish("call", f"weak pair; call a small price ({odds})", 0.70)
         if "fold" in legal and state.to_call > 0:
-            return _finish("fold", f"one pair; price is too wide ({odds})", 0.72)
-        return _finish(_fallback(legal), f"one pair; no better legal action ({odds})", 0.70)
+            return _finish("fold", f"weak pair; price is too wide ({odds})", 0.72)
+        return _finish(_fallback(legal), f"weak pair; no better legal action ({odds})", 0.70)
 
     if flags["overcards"]:
         if state.to_call <= 0 and "check" in legal:
