@@ -54,7 +54,11 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["mlx: small real Spark architecture tests; requires MLX", "integration: requires downloaded Spark weights"]
+markers = [
+  "mlx: small real Spark architecture tests; requires MLX",
+  "integration: requires downloaded Spark weights",
+  "browser: local mock casino via Playwright Chromium; skipped when Playwright or Chromium is missing",
+]
 
 [tool.ruff]
 line-length = 100

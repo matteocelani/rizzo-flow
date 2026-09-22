@@ -17,6 +17,26 @@ from rizzo_flow.schema import Option
 HOLD_POLICY = "hold_policy"
 
 
+def no_play_options(detail: str) -> list[Option]:
+    """Safe stop path: one ``pass`` action, then the fail-closed sentinel.
+
+    ``pass`` is not a card and not a stake. Builders use it when
+    ``RiskPolicy.should_stop`` is true so a costly or forced play is not the
+    only letter in front of the model.
+    """
+    return pad_singleton(
+        [
+            Option(
+                id="pass",
+                description=(
+                    "Pass. Do not play a card and do not stake chips. "
+                    f"Session policy stopped this decision ({detail})."
+                ),
+            )
+        ]
+    )
+
+
 def pad_singleton(options: list[Option]) -> list[Option]:
     """Return ``options`` unchanged when ≥2; otherwise append the sentinel."""
     if len(options) >= 2:

@@ -5,7 +5,7 @@ weights and does not fork the inference path: it uses ``rizzo_flow.schema.Reques
 and (optionally) a running Rizzo Engine or HTTP server.
 """
 
-from .games.registry import GAMES, build_request, load_game_state, register_game
+from .games.registry import GAMES, build_request, load_game_state, register_game, unregister_game
 
-__all__ = ["GAMES", "build_request", "load_game_state", "register_game"]
+__all__ = ["GAMES", "build_request", "load_game_state", "register_game", "unregister_game"]
 __version__ = "0.1.0"

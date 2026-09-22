@@ -2,20 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Jevbet mock blackjack table</title>
+  <title>Jevbet mock casino — blackjack</title>
+  <link rel="stylesheet" href="casino.css" />
 </head>
 <body>
-  <!-- Local fixture only — no network, no real casino. -->
-  <div id="table"
-       data-game="blackjack"
-       data-bankroll="500"
-       data-bet="25"
-       data-decks="6">
-    <div data-role="dealer" data-upcard="KH"></div>
-    <div data-role="player" data-cards="AS,7D" data-soft="true"></div>
-    <button type="button" data-action="hit">Hit</button>
-    <button type="button" data-action="stand">Stand</button>
-    <button type="button" data-action="double">Double</button>
-  </div>
+  <main>
+    <header>
+      <p class="eyebrow">Local mock · no real money · no network</p>
+      <h1>Blackjack</h1>
+      <p class="bankroll-line">Bankroll <strong id="bankroll-display">500</strong> EUR
+        · session <strong id="profit-display">0</strong></p>
+    </header>
+    <!-- Snapshot the static parser reads. casino.js keeps the same data-* contract. -->
+    <div id="table"
+         data-game="blackjack"
+         data-bankroll="500"
+         data-currency="EUR"
+         data-session-profit="0"
+         data-bet="25"
+         data-decks="6"
+         data-phase="playing"
+         data-table-min="25">
+      <div class="role" data-role="dealer" data-upcard="KH" data-hole="3C">
+        <p>Dealer</p>
+      </div>
+      <div class="role" data-role="player" data-cards="8S,8D" data-soft="false">
+        <p>You</p>
+      </div>
+      <div id="actions">
+        <button type="button" data-action="hit">Hit</button>
+        <button type="button" data-action="stand">Stand</button>
+        <button type="button" data-action="double">Double</button>
+        <button type="button" data-action="split">Split</button>
+      </div>
+      <p id="status"></p>
+    </div>
+  </main>
+  <script src="casino.js"></script>
 </body>
 </html>

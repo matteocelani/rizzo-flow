@@ -2,25 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Jevbet mock Texas Hold'em table</title>
+  <title>Jevbet mock casino — Texas Hold'em</title>
+  <link rel="stylesheet" href="casino.css" />
 </head>
 <body>
-  <div id="table"
-       data-game="holdem"
-       data-street="flop"
-       data-bankroll="1000"
-       data-pot="60"
-       data-to-call="20"
-       data-stack="940"
-       data-position="CO"
-       data-players="6"
-       data-min-raise="20"
-       data-raise-suggestions="20,30,50">
-    <div data-role="hero" data-cards="AH,KD"></div>
-    <div data-role="board" data-cards="QS,JH,2C"></div>
-    <button type="button" data-action="fold">Fold</button>
-    <button type="button" data-action="call">Call</button>
-    <button type="button" data-action="raise">Raise</button>
-  </div>
+  <main>
+    <header>
+      <p class="eyebrow">Local mock · one street · no real money · no network</p>
+      <h1>Texas Hold'em</h1>
+      <p class="bankroll-line">Bankroll <strong id="bankroll-display">1000</strong> EUR
+        · session <strong id="profit-display">0</strong></p>
+    </header>
+    <div id="table"
+         data-game="holdem"
+         data-street="flop"
+         data-bankroll="1000"
+         data-currency="EUR"
+         data-session-profit="0"
+         data-pot="60"
+         data-to-call="20"
+         data-stack="1000"
+         data-position="CO"
+         data-players="6"
+         data-min-raise="20"
+         data-raise-suggestions="20,30,50"
+         data-phase="playing"
+         data-table-min="0">
+      <div class="role" data-role="board" data-cards="QS,JH,2C">
+        <p>Board</p>
+      </div>
+      <div class="role" data-role="hero" data-cards="AH,KD">
+        <p>You · CO</p>
+      </div>
+      <div id="actions">
+        <button type="button" data-action="fold">Fold</button>
+        <button type="button" data-action="call">Call</button>
+        <button type="button" data-action="raise">Raise</button>
+        <label class="stake">Amount
+          <input data-amount type="number" min="20" step="1" value="20" />
+        </label>
+      </div>
+      <p id="status"></p>
+    </div>
+  </main>
+  <script src="casino.js"></script>
 </body>
 </html>
