@@ -31,6 +31,7 @@ class MockCasinoAdapter:
         port: int = 0,
         headless: bool = True,
         allowed_url_prefixes: tuple[str, ...] = DEFAULT_LOCAL_PREFIXES,
+        rules: dict | None = None,
     ):
         if game not in {"blackjack", "holdem"}:
             raise ValueError(
@@ -45,6 +46,7 @@ class MockCasinoAdapter:
         self.port = port
         self.headless = headless
         self.allowed_url_prefixes = tuple(allowed_url_prefixes)
+        self.rules = rules
         self._server: MockCasinoServer | None = None
         self._driver: TableDriver | None = None
 
@@ -57,6 +59,7 @@ class MockCasinoAdapter:
                 seed=self.seed,
                 cash=self.cash,
                 stop_loss=self.stop_loss,
+                rules=self.rules,
             )
             return self._driver
         server = MockCasinoServer(port=self.port)

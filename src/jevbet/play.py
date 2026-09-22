@@ -19,7 +19,7 @@ from .games.registry import build_request, load_game_state
 from .policy import RiskPolicy
 from .strategy import compose_response, recommend, should_use_model
 
-SAFE_TABLE_ACTIONS = frozenset({"stand", "fold", "check", "pass"})
+SAFE_TABLE_ACTIONS = frozenset({"stand", "fold", "check", "pass", "decline"})
 _CHOICE_KEYS = ("action", "play", "card", "bet_type")
 
 
@@ -52,17 +52,19 @@ def _spot(state: dict) -> str:
 
 
 def _amount_for(choice: str | None, answers: dict) -> float | None:
-    if choice != "raise":
+    if choice not in {"raise", "bet"}:
         return None
-    numeric = answers.get("raise_amount")
-    if not isinstance(numeric, dict):
-        return None
-    if numeric.get("status") not in {None, "ok"}:
-        return None
-    value = numeric.get("value")
-    if value is None:
-        return None
-    return float(value)
+    for key in ("raise_amount", "bet_amount"):
+        numeric = answers.get(key)
+        if not isinstance(numeric, dict):
+            continue
+        if numeric.get("status") not in {None, "ok"}:
+            continue
+        value = numeric.get("value")
+        if value is None:
+            continue
+        return float(value)
+    return None
 
 
 def run_play_loop(
